@@ -60,6 +60,9 @@
  * CONFIG_END
  * ; comment line.
  * SCENARIO_BEGIN name_of_scenario
+ * ; optional: the pending serviced UDP queries time out when TIME_PASSES
+ * ; passes their timeout from the infra cache, like the outside network.
+ * UDP_TIMEOUTS
  * RANGE_BEGIN start_time end_time
  *    ; give ip of the virtual server, it matches any ip if not present.
  *    ADDRESS ip_address 
@@ -176,6 +179,11 @@ struct replay_scenario {
 	 * So: timestep, parts of query, destination --> answer.
 	 */
 	struct replay_range* range_list;
+
+	/** UDP_TIMEOUTS: the pending serviced UDP queries time out by
+	 * themselves when the time that was passed (TIME_PASSES) is over
+	 * their timeout from infra, like the real outside network does. */
+	int udp_timeouts;
 };
 
 /**
@@ -357,6 +365,11 @@ struct fake_pending {
 	void* cb_arg;
 	/** original timeout in seconds from 'then' */
 	int timeout;
+	/** UDP_TIMEOUTS: the timeout in msec of infra, and when it was
+	 * sent; the timeout is 0 when it is not used. */
+	int timeout_msec;
+	/** time the query was sent */
+	struct timeval sent_tv;
 
 	/** next in pending list */
 	struct fake_pending* next;

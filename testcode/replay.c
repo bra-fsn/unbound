@@ -485,6 +485,8 @@ replay_scenario_read(FILE* in, const char* name, int* lineno)
 				scen->mom_last->mom_next = mom;
 			else	scen->mom_first = mom;
 			scen->mom_last = mom;
+		} else if(parse_keyword(&parse, "UDP_TIMEOUTS")) {
+			scen->udp_timeouts = 1;
 		} else if(parse_keyword(&parse, "SCENARIO_END")) {
 			struct replay_moment *p = scen->mom_first;
 			int num = 0;

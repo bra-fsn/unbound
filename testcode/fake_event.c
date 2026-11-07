@@ -517,10 +517,9 @@ fake_front_query(struct replay_runtime* runtime, struct replay_moment *todo)
  * Perform callback for fake pending message.
  */
 static void
-fake_pending_callback(struct replay_runtime* runtime,
-	struct replay_moment* todo, int error)
+fake_pending_callback_p(struct replay_runtime* runtime,
+	struct replay_moment* todo, int error, struct fake_pending* p)
 {
-	struct fake_pending* p = runtime->pending_list;
 	struct comm_reply repinfo;
 	struct comm_point c;
 	void* cb_arg;
@@ -537,7 +536,7 @@ fake_pending_callback(struct replay_runtime* runtime,
 		c.tcp_timeout_msec = 30000;
 		c.tcp_keepalive = runtime->tcp_seen_keepalive;
 	}
-	if(todo->evt_type == repevt_back_reply && todo->match) {
+	if(todo && todo->evt_type == repevt_back_reply && todo->match) {
 		fill_buffer_with_reply(c.buffer, todo->match, p->pkt,
 			p->pkt_len, p->tcp_pkt_counter);
 	}
@@ -545,7 +544,7 @@ fake_pending_callback(struct replay_runtime* runtime,
 	repinfo.remote_addrlen = p->addrlen;
 	memcpy(&repinfo.remote_addr, &p->addr, p->addrlen);
 	if(!p->serviced) {
-		if(todo->match && todo->match->reply_list->next && !error &&
+		if(todo && todo->match && todo->match->reply_list->next && !error &&
 			p->tcp_pkt_counter < count_reply_packets(todo->match)) {
 			/* go to next packet next time */
 			p->tcp_pkt_counter++;
@@ -558,6 +557,44 @@ fake_pending_callback(struct replay_runtime* runtime,
 	}
 	/* delete the pending item. */
 	sldns_buffer_free(c.buffer);
+}
+
+/**
+ * Perform callback for the first fake pending message.
+ */
+static void
+fake_pending_callback(struct replay_runtime* runtime,
+	struct replay_moment* todo, int error)
+{
+	fake_pending_callback_p(runtime, todo, error, runtime->pending_list);
+}
+
+/** the pending UDP query with the oldest expired timeout, or NULL */
+static struct fake_pending*
+oldest_udp_timeout(struct replay_runtime* runtime, struct timeval* when)
+{
+	struct fake_pending* p, *res = NULL;
+	struct timeval w, rw;
+	for(p = runtime->pending_list; p; p = p->next) {
+		if(!p->timeout_msec || p->transport != transport_udp)
+			continue;
+		w = p->sent_tv;
+		w.tv_sec += p->timeout_msec/1000;
+		w.tv_usec += (p->timeout_msec%1000)*1000;
+		if(w.tv_usec >= 1000000) {
+			w.tv_usec -= 1000000;
+			w.tv_sec++;
+		}
+		if(timeval_smaller(&runtime->now_tv, &w))
+			continue; /* not yet */
+		if(!res || timeval_smaller(&w, &rw)) {
+			res = p;
+			rw = w;
+		}
+	}
+	if(res)
+		*when = rw;
+	return res;
 }
 
 /** pass time */
@@ -600,8 +637,24 @@ time_passes(struct replay_runtime* runtime, struct replay_moment* mom)
 		(int)tv.tv_sec, (int)tv.tv_usec,
 		(int)runtime->now_tv.tv_sec, (int)runtime->now_tv.tv_usec);
 #endif
-	/* see if any timers have fired; and run them */
-	while( (t=replay_get_oldest_timer(runtime)) ) {
+	/* see if any timers have fired; and run them.  With UDP_TIMEOUTS
+	 * the timeouts of the pending UDP queries are run too, in order of
+	 * time; a timer goes before a timeout of the same time. */
+	while(1) {
+		struct fake_pending* p = NULL;
+		struct timeval when;
+		t = replay_get_oldest_timer(runtime);
+		if(runtime->scenario->udp_timeouts)
+			p = oldest_udp_timeout(runtime, &when);
+		if(p && (!t || timeval_smaller(&when, &t->tv))) {
+			log_info("fake UDP timeout of the pending query");
+			p->timeout_msec = 0; /* once */
+			fake_pending_callback_p(runtime, NULL, NETEVENT_TIMEOUT,
+				p);
+			continue;
+		}
+		if(!t)
+			break;
 		t->enabled = 0;
 		log_info("fake_timer callback");
 		fptr_ok(fptr_whitelist_comm_timer(t->cb));
@@ -1395,6 +1448,16 @@ struct serviced_query* outnet_serviced_query(struct outside_network* outnet,
 	pend->cb_arg = callback_arg;
 	pend->timeout = UDP_AUTH_QUERY_TIMEOUT/1000;
 	pend->transport = tcp_upstream?transport_tcp:transport_udp;
+	if(runtime->scenario->udp_timeouts && !tcp_upstream) {
+		/* the timeout of the UDP query is from infra, like in the
+		 * outside network */
+		int vs, rtt = 0;
+		uint8_t lame;
+		if(infra_host(env->infra_cache, addr, addrlen, zone, zonelen,
+			runtime->now_secs, &vs, &lame, &rtt))
+			pend->timeout_msec = rtt;
+		pend->sent_tv = runtime->now_tv;
+	}
 	pend->pkt = NULL;
 	pend->runtime = runtime;
 	pend->serviced = 1;
