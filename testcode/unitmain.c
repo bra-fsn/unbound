@@ -1499,6 +1499,9 @@ main(int argc, char* argv[])
 #ifdef CLIENT_SUBNET
 	ecs_test();
 #endif /* CLIENT_SUBNET */
+#ifdef USE_CLUSTER
+	cluster_test();
+#endif /* USE_CLUSTER */
 #ifdef HAVE_NGTCP2
 	doq_test();
 #endif /* HAVE_NGTCP2 */

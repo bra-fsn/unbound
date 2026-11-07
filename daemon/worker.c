@@ -60,6 +60,9 @@
 #include "services/cache/dns.h"
 #include "services/authzone.h"
 #include "services/mesh.h"
+#ifdef USE_CLUSTER
+#include "cluster/cluster.h"
+#endif
 #include "services/localzone.h"
 #include "services/rpz.h"
 #include "util/data/msgparse.h"
@@ -2582,6 +2585,14 @@ void worker_stats_clear(struct worker* worker)
 	worker->back->unwanted_replies = 0;
 	worker->back->num_tcp_outgoing = 0;
 	worker->back->num_udp_outgoing = 0;
+#ifdef USE_CLUSTER
+	{
+		struct cluster_env* ce = cluster_env_find(
+			&worker->env.mesh->mods, &worker->env);
+		if(ce)
+			cluster_stats_clear_thread(ce, worker->thread_num);
+	}
+#endif
 }
 
 void worker_start_accept(void* arg)

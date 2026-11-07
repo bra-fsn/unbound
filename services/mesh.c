@@ -65,6 +65,9 @@
 #include "respip/respip.h"
 #include "services/listen_dnsport.h"
 #include "util/timeval_func.h"
+#ifdef USE_CLUSTER
+#include "cluster/cluster.h"
+#endif
 
 #ifdef CLIENT_SUBNET
 #include "edns-subnet/subnetmod.h"
@@ -469,6 +472,7 @@ void mesh_new_client(struct mesh_area* mesh, struct query_info* qinfo,
 {
 	struct mesh_state* s = NULL;
 	int unique = unique_mesh_state(edns->opt_list_in, mesh->env);
+	void* cluster_uq = NULL;
 	int was_detached = 0;
 	int was_noreply = 0;
 	int added = 0, added_reply_without_accounting = 0, added_tcp = 0;
@@ -480,6 +484,10 @@ void mesh_new_client(struct mesh_area* mesh, struct query_info* qinfo,
 	if(rep->c->tcp_req_info) {
 		r_buffer = rep->c->tcp_req_info->spool_buffer;
 	}
+#ifdef USE_CLUSTER
+	/* queries from cluster peers aggregate only with their own kind */
+	cluster_uq = cluster_mesh_unique(mesh, edns, rep);
+#endif
 	if(!infra_wait_limit_allowed(mesh->env->infra_cache, rep,
 		edns->cookie_valid, mesh->env->cfg)) {
 		verbose(VERB_ALGO, "Too many queries waiting from the IP. "
@@ -498,7 +506,8 @@ void mesh_new_client(struct mesh_area* mesh, struct query_info* qinfo,
 		return;
 	}
 	if(!unique)
-		s = mesh_area_find(mesh, cinfo, qinfo, mesh_flags, 0, 0);
+		s = mesh_area_find_unique(mesh, cinfo, qinfo, mesh_flags, 0, 0,
+			cluster_uq);
 	/* does this create a new reply state? */
 	if(!s || s->list_select == mesh_no_list) {
 		if(!mesh_make_new_space(mesh, rep->c->buffer)) {
@@ -553,6 +562,7 @@ void mesh_new_client(struct mesh_area* mesh, struct query_info* qinfo,
 		mesh->num_detached_states++;
 		if(unique)
 			mesh_state_make_unique(s);
+		else	s->unique = cluster_uq;
 		s->s.rpz_passthru = rpz_passthru;
 		/* copy the edns options we got from the front */
 		if(edns->opt_list_in) {

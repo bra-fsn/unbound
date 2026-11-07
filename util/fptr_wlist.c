@@ -89,6 +89,9 @@
 #ifdef USE_CACHEDB
 #include "cachedb/cachedb.h"
 #endif
+#ifdef USE_CLUSTER
+#include "cluster/cluster.h"
+#endif
 #ifdef USE_IPSECMOD
 #include "ipsecmod/ipsecmod.h"
 #endif
@@ -147,6 +150,9 @@ fptr_whitelist_comm_timer(void (*fptr)(void*))
 	else if(fptr == &auth_xfer_probe_timer_callback) return 1;
 	else if(fptr == &auth_xfer_transfer_timer_callback) return 1;
 	else if(fptr == &mesh_serve_expired_callback) return 1;
+#ifdef USE_CLUSTER
+	else if(fptr == &cluster_timer_cb) return 1;
+#endif
 	else if(fptr == &serviced_timer_cb) return 1;
 #ifdef USE_DNSTAP
 	else if(fptr == &mq_wakeup_cb) return 1;
@@ -431,6 +437,9 @@ fptr_whitelist_mod_init(int (*fptr)(struct module_env* env, int id))
 #ifdef USE_CACHEDB
 	else if(fptr == &cachedb_init) return 1;
 #endif
+#ifdef USE_CLUSTER
+	else if(fptr == &cluster_init) return 1;
+#endif
 #ifdef USE_IPSECMOD
 	else if(fptr == &ipsecmod_init) return 1;
 #endif
@@ -458,6 +467,9 @@ fptr_whitelist_mod_deinit(void (*fptr)(struct module_env* env, int id))
 #endif
 #ifdef USE_CACHEDB
 	else if(fptr == &cachedb_deinit) return 1;
+#endif
+#ifdef USE_CLUSTER
+	else if(fptr == &cluster_deinit) return 1;
 #endif
 #ifdef USE_IPSECMOD
 	else if(fptr == &ipsecmod_deinit) return 1;
@@ -510,6 +522,9 @@ fptr_whitelist_mod_operate(void (*fptr)(struct module_qstate* qstate,
 #ifdef USE_CACHEDB
 	else if(fptr == &cachedb_operate) return 1;
 #endif
+#ifdef USE_CLUSTER
+	else if(fptr == &cluster_operate) return 1;
+#endif
 #ifdef USE_IPSECMOD
 	else if(fptr == &ipsecmod_operate) return 1;
 #endif
@@ -538,6 +553,9 @@ fptr_whitelist_mod_inform_super(void (*fptr)(
 #endif
 #ifdef USE_CACHEDB
 	else if(fptr == &cachedb_inform_super) return 1;
+#endif
+#ifdef USE_CLUSTER
+	else if(fptr == &cluster_inform_super) return 1;
 #endif
 #ifdef USE_IPSECMOD
 	else if(fptr == &ipsecmod_inform_super) return 1;
@@ -568,6 +586,9 @@ fptr_whitelist_mod_clear(void (*fptr)(struct module_qstate* qstate,
 #ifdef USE_CACHEDB
 	else if(fptr == &cachedb_clear) return 1;
 #endif
+#ifdef USE_CLUSTER
+	else if(fptr == &cluster_clear) return 1;
+#endif
 #ifdef USE_IPSECMOD
 	else if(fptr == &ipsecmod_clear) return 1;
 #endif
@@ -595,6 +616,9 @@ fptr_whitelist_mod_get_mem(size_t (*fptr)(struct module_env* env, int id))
 #endif
 #ifdef USE_CACHEDB
 	else if(fptr == &cachedb_get_mem) return 1;
+#endif
+#ifdef USE_CLUSTER
+	else if(fptr == &cluster_get_mem) return 1;
 #endif
 #ifdef USE_IPSECMOD
 	else if(fptr == &ipsecmod_get_mem) return 1;
@@ -650,6 +674,9 @@ int fptr_whitelist_inplace_cb_reply_generic(inplace_cb_reply_func_type* fptr,
 	(void)fptr;
 #endif
 	if(type == inplace_cb_reply) {
+#ifdef USE_CLUSTER
+		if(fptr == &cluster_inplace_reply) return 1;
+#endif
 #ifdef WITH_PYTHONMODULE
 		if(fptr == &python_inplace_cb_reply_generic) return 1;
 #endif
@@ -657,6 +684,9 @@ int fptr_whitelist_inplace_cb_reply_generic(inplace_cb_reply_func_type* fptr,
 		if(fptr == &dynlib_inplace_cb_reply_generic) return 1;
 #endif
 	} else if(type == inplace_cb_reply_cache) {
+#ifdef USE_CLUSTER
+		if(fptr == &cluster_inplace_reply) return 1;
+#endif
 #ifdef WITH_PYTHONMODULE
 		if(fptr == &python_inplace_cb_reply_generic) return 1;
 #endif

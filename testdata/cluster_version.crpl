@@ -1,0 +1,66 @@
+; config options
+server:
+	access-control: 10.0.0.0/8 allow
+	target-fetch-policy: "0 0 0 0 0"
+	qname-minimisation: no
+	module-config: "cluster iterator"
+
+cluster:
+	cluster-peer: 10.0.0.1
+	cluster-peer: 10.0.0.2
+	cluster-peer: 10.0.0.3
+	cluster-self: 10.0.0.1
+	cluster-timeout: 100
+
+stub-zone:
+	name: "example.com"
+	stub-addr: 192.0.2.1
+CONFIG_END
+
+SCENARIO_BEGIN Cluster: a query with an unknown CLUSTER option version is a plain client query.
+; www.example.com is owned by 10.0.0.3, the query is routed there, it is
+; not handled as a peer query.
+
+RANGE_BEGIN 0 400
+	ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA RD RA NOERROR
+SECTION QUESTION
+www.example.com. IN A
+SECTION ANSWER
+www.example.com. 3600 IN A 10.9.9.1
+ENTRY_END
+RANGE_END
+
+STEP 1 QUERY ADDRESS 10.0.0.2
+ENTRY_BEGIN
+MATCH ednsdata
+REPLY RD
+SECTION QUESTION
+www.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8           ; Opcode 65480 CLUSTER
+		00 0a           ; Length 10
+		02 01           ; version 2, flags PEER
+		00 00 00 00 00 00 00 02 ; node id of the sender
+	HEX_EDNSDATA_END
+ENTRY_END
+
+; no echo of the option: this was not handled as a peer query
+STEP 10 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all ednsdata
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+www.example.com. IN A
+SECTION ANSWER
+www.example.com. 3600 IN A 10.9.9.1
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+	HEX_EDNSDATA_END
+ENTRY_END
+
+SCENARIO_END

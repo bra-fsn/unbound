@@ -2169,6 +2169,19 @@ case "$enable_cachedb" in
     	;;
 esac
 
+# check for cluster if requested
+AC_ARG_ENABLE(cluster, AS_HELP_STRING([--enable-cluster],[enable cluster module that shares the cache between cooperating unbound instances]))
+case "$enable_cluster" in
+    yes)
+    	AC_DEFINE([USE_CLUSTER], [1], [Define to 1 to use cluster support])
+	AC_SUBST([CLUSTER_SRC], ["cluster/cluster.c"])
+	AC_SUBST([CLUSTER_OBJ], ["cluster.lo"])
+    	;;
+    no|*)
+    	# nothing
+    	;;
+esac
+
 # check for ipsecmod if requested
 AC_ARG_ENABLE(ipsecmod, AS_HELP_STRING([--enable-ipsecmod],[Enable ipsecmod module that facilitates opportunistic IPsec]))
 case "$enable_ipsecmod" in

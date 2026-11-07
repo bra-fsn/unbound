@@ -57,6 +57,9 @@
 #ifdef USE_CACHEDB
 #include "cachedb/cachedb.h"
 #endif
+#ifdef USE_CLUSTER
+#include "cluster/cluster.h"
+#endif
 #ifdef USE_IPSECMOD
 #include "ipsecmod/ipsecmod.h"
 #endif
@@ -162,6 +165,9 @@ module_list_avail(void)
 #ifdef USE_CACHEDB
 		"cachedb",
 #endif
+#ifdef USE_CLUSTER
+		"cluster",
+#endif
 #ifdef USE_IPSECMOD
 		"ipsecmod",
 #endif
@@ -195,6 +201,9 @@ module_funcs_avail(void)
 #endif
 #ifdef USE_CACHEDB
 		&cachedb_get_funcblock,
+#endif
+#ifdef USE_CLUSTER
+		&cluster_get_funcblock,
 #endif
 #ifdef USE_IPSECMOD
 		&ipsecmod_get_funcblock,

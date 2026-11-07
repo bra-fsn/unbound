@@ -1,0 +1,162 @@
+; config options
+server:
+	access-control: 10.0.0.0/8 allow
+	target-fetch-policy: "0 0 0 0 0"
+	qname-minimisation: no
+	module-config: "validator cluster iterator"
+	serve-expired: yes
+	serve-expired-client-timeout: 0
+
+cluster:
+	cluster-peer: 10.0.0.1
+	cluster-peer: 10.0.0.2
+	cluster-peer: 10.0.0.3
+	cluster-self: 10.0.0.1
+	cluster-timeout: 100
+
+stub-zone:
+	name: "example.com"
+	stub-addr: 192.0.2.1
+CONFIG_END
+
+SCENARIO_BEGIN Cluster: the owner serves an expired cache entry to a peer, the reply has the STALE flag.
+; The entry has a ttl of 10 seconds, and is expired when it is asked again.
+
+STEP 1 QUERY ADDRESS 10.0.0.2
+ENTRY_BEGIN
+MATCH ednsdata
+REPLY RD
+SECTION QUESTION
+www.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8           ; CLUSTER option
+		00 0a           ; length 10
+		01 01           ; version 1, flags
+		00 00 00 00 00 00 00 02 ; node id
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 2 CHECK_OUT_QUERY ADDRESS 192.0.2.1
+ENTRY_BEGIN
+MATCH qname qtype
+SECTION QUESTION
+www.example.com. IN A
+ENTRY_END
+
+STEP 3 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA NOERROR
+SECTION QUESTION
+www.example.com. IN A
+SECTION ANSWER
+www.example.com. 10 IN A 10.20.30.40
+ENTRY_END
+
+STEP 4 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all ednsdata
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+www.example.com. IN A
+SECTION ANSWER
+www.example.com. 10 IN A 10.20.30.40
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8           ; CLUSTER option
+		00 0a           ; length 10
+		01 01           ; version 1, flags
+		c1 68 3f 06 a9 43 ed 49 ; node id
+	HEX_EDNSDATA_END
+ENTRY_END
+
+; in the cache, not expired
+STEP 10 QUERY ADDRESS 10.0.0.2
+ENTRY_BEGIN
+MATCH ednsdata
+REPLY RD
+SECTION QUESTION
+www.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8           ; CLUSTER option
+		00 0a           ; length 10
+		01 03           ; version 1, flags
+		00 00 00 00 00 00 00 02 ; node id
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 11 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all ednsdata
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+www.example.com. IN A
+SECTION ANSWER
+www.example.com. 10 IN A 10.20.30.40
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8           ; CLUSTER option
+		00 0a           ; length 10
+		01 05           ; version 1, flags
+		c1 68 3f 06 a9 43 ed 49 ; node id
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 20 TIME_PASSES ELAPSE 20
+
+; expired, served from the cache with the STALE flag, also to a probe
+STEP 30 QUERY ADDRESS 10.0.0.2
+ENTRY_BEGIN
+MATCH ednsdata
+REPLY RD
+SECTION QUESTION
+www.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8           ; CLUSTER option
+		00 0a           ; length 10
+		01 03           ; version 1, flags
+		00 00 00 00 00 00 00 02 ; node id
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 31 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all ednsdata
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+www.example.com. IN A
+SECTION ANSWER
+www.example.com. 30 IN A 10.20.30.40
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8           ; CLUSTER option
+		00 0a           ; length 10
+		01 15           ; version 1, flags
+		c1 68 3f 06 a9 43 ed 49 ; node id
+	HEX_EDNSDATA_END
+ENTRY_END
+
+; the refresh of the entry is in progress, the authority answers it
+STEP 32 CHECK_OUT_QUERY ADDRESS 192.0.2.1
+ENTRY_BEGIN
+MATCH qname qtype
+SECTION QUESTION
+www.example.com. IN A
+ENTRY_END
+
+STEP 33 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA NOERROR
+SECTION QUESTION
+www.example.com. IN A
+SECTION ANSWER
+www.example.com. 3600 IN A 10.20.30.40
+ENTRY_END
+
+SCENARIO_END

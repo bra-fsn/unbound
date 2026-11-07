@@ -1,0 +1,50 @@
+# #-- cluster_control.pre--#
+# source the master var file when it's there
+[ -f ../.tpkg.var.master ] && source ../.tpkg.var.master
+# use .tpkg.var.test for in test variable passing
+[ -f .tpkg.var.test ] && source .tpkg.var.test
+
+. ../common.sh
+
+PRE="../.."
+if grep "define USE_CLUSTER 1" $PRE/config.h; then echo test enabled; else skip_test "test skipped, no cluster module"; fi
+
+get_random_port 6
+PORT_A=$RND_PORT
+PORT_B=$(($RND_PORT + 1))
+AUTH_PORT=$(($RND_PORT + 2))
+CONTROL_A=$(($RND_PORT + 3))
+CONTROL_B=$(($RND_PORT + 4))
+CONTROL_AUTH=$(($RND_PORT + 5))
+echo "PORT_A=$PORT_A" >> .tpkg.var.test
+echo "PORT_B=$PORT_B" >> .tpkg.var.test
+echo "AUTH_PORT=$AUTH_PORT" >> .tpkg.var.test
+echo "CONTROL_A=$CONTROL_A" >> .tpkg.var.test
+echo "CONTROL_B=$CONTROL_B" >> .tpkg.var.test
+echo "CONTROL_AUTH=$CONTROL_AUTH" >> .tpkg.var.test
+
+# the fake authority is an unbound with local-data, that answers for
+# all names in example.com
+sed -e 's/@AUTH_PORT\@/'$AUTH_PORT'/' -e 's/@AUTH_CONTROL_PORT\@/'$CONTROL_AUTH'/' < cluster_control_auth.conf > ub_auth.conf
+# the two cluster peers
+for n in A B; do
+	eval port=\$PORT_$n
+	eval ctl=\$CONTROL_$n
+	sed -e 's/@PORT\@/'$port'/' -e 's/@NAME\@/'$n'/' -e 's/@PORT_A\@/'$PORT_A'/' -e 's/@PORT_B\@/'$PORT_B'/' -e 's/@AUTH_PORT\@/'$AUTH_PORT'/' -e 's/@CONTROL_PORT\@/'$ctl'/' < cluster_control.conf > ub_$n.conf
+done
+
+$PRE/unbound -d -c ub_auth.conf >unbound_auth.log 2>&1 &
+echo "AUTH_PID=$!" >> .tpkg.var.test
+$PRE/unbound -d -c ub_A.conf >unbound_A.log 2>&1 &
+echo "A_PID=$!" >> .tpkg.var.test
+$PRE/unbound -d -c ub_B.conf >unbound_B.log 2>&1 &
+echo "B_PID=$!" >> .tpkg.var.test
+
+cat .tpkg.var.test
+wait_unbound_up unbound_auth.log
+wait_unbound_up unbound_A.log
+wait_unbound_up unbound_B.log
+
+# the streamtcp tool sends the queries
+get_make
+(cd $PRE; $MAKE streamtcp)

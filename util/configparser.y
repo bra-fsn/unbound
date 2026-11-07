@@ -200,6 +200,8 @@ extern struct config_parser_state* cfg_parser;
 %token VAR_WAIT_LIMIT_NETBLOCK VAR_WAIT_LIMIT_COOKIE_NETBLOCK
 %token VAR_STREAM_WAIT_SIZE VAR_TLS_CIPHERS VAR_TLS_CIPHERSUITES VAR_TLS_USE_SNI
 %token VAR_TLS_PROTOCOLS
+%token VAR_CLUSTER VAR_CLUSTER_PEER VAR_CLUSTER_SELF
+%token VAR_CLUSTER_LOCAL_TTL_MAX VAR_CLUSTER_EXCLUDE VAR_CLUSTER_TIMEOUT
 %token VAR_IPSET VAR_IPSET_NAME_V4 VAR_IPSET_NAME_V6
 %token VAR_TLS_SESSION_TICKET_KEYS VAR_RPZ VAR_TAGS VAR_RPZ_ACTION_OVERRIDE
 %token VAR_RPZ_CNAME_OVERRIDE VAR_RPZ_LOG VAR_RPZ_LOG_NAME
@@ -229,6 +231,7 @@ toplevelvar: serverstart contents_server | stub_clause |
 	forward_clause | pythonstart contents_py |
 	rcstart contents_rc | dtstart contents_dt | view_clause |
 	dnscstart contents_dnsc | cachedbstart contents_cachedb |
+	clusterstart contents_cluster |
 	ipsetstart contents_ipset | authstart contents_auth |
 	rpzstart contents_rpz | dynlibstart contents_dl |
 	force_toplevel
@@ -4198,6 +4201,83 @@ redis_replica_logical_db: VAR_CACHEDB_REDISREPLICALOGICALDB STRING_ARG
 		else cfg_parser->cfg->redis_replica_logical_db = db;
 	#else
 		OUTYY(("P(Compiled without cachedb or redis, ignoring)\n"));
+	#endif
+		free($2);
+	}
+	;
+clusterstart: VAR_CLUSTER
+	{
+		OUTYY(("\nP(cluster:)\n"));
+		cfg_parser->started_toplevel = 1;
+	}
+	;
+contents_cluster: contents_cluster content_cluster
+	| ;
+content_cluster: cluster_peer | cluster_self | cluster_local_ttl_max |
+	cluster_exclude | cluster_timeout
+	;
+cluster_peer: VAR_CLUSTER_PEER STRING_ARG
+	{
+	#ifdef USE_CLUSTER
+		OUTYY(("P(cluster-peer:%s)\n", $2));
+		if(!cfg_strlist_insert(&cfg_parser->cfg->cluster_peer, $2))
+			yyerror("out of memory");
+	#else
+		OUTYY(("P(Compiled without cluster, ignoring)\n"));
+		free($2);
+	#endif
+	}
+	;
+cluster_self: VAR_CLUSTER_SELF STRING_ARG
+	{
+	#ifdef USE_CLUSTER
+		OUTYY(("P(cluster-self:%s)\n", $2));
+		free(cfg_parser->cfg->cluster_self);
+		cfg_parser->cfg->cluster_self = $2;
+	#else
+		OUTYY(("P(Compiled without cluster, ignoring)\n"));
+		free($2);
+	#endif
+	}
+	;
+cluster_local_ttl_max: VAR_CLUSTER_LOCAL_TTL_MAX STRING_ARG
+	{
+	#ifdef USE_CLUSTER
+		OUTYY(("P(cluster-local-ttl-max:%s)\n", $2));
+		if(atoi($2) == 0 && strcmp($2, "0") != 0)
+			yyerror("number expected");
+		else if(atoi($2) < 0)
+			yyerror("negative value not allowed");
+		else cfg_parser->cfg->cluster_local_ttl_max = atoi($2);
+	#else
+		OUTYY(("P(Compiled without cluster, ignoring)\n"));
+	#endif
+		free($2);
+	}
+	;
+cluster_exclude: VAR_CLUSTER_EXCLUDE STRING_ARG
+	{
+	#ifdef USE_CLUSTER
+		OUTYY(("P(cluster-exclude:%s)\n", $2));
+		if(!cfg_strlist_insert(&cfg_parser->cfg->cluster_exclude, $2))
+			yyerror("out of memory");
+	#else
+		OUTYY(("P(Compiled without cluster, ignoring)\n"));
+		free($2);
+	#endif
+	}
+	;
+cluster_timeout: VAR_CLUSTER_TIMEOUT STRING_ARG
+	{
+	#ifdef USE_CLUSTER
+		OUTYY(("P(cluster-timeout:%s)\n", $2));
+		if(atoi($2) == 0 && strcmp($2, "0") != 0)
+			yyerror("number expected");
+		else if(atoi($2) < 0)
+			yyerror("negative value not allowed");
+		else cfg_parser->cfg->cluster_timeout = atoi($2);
+	#else
+		OUTYY(("P(Compiled without cluster, ignoring)\n"));
 	#endif
 		free($2);
 	}

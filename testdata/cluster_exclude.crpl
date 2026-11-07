@@ -1,0 +1,54 @@
+; config options
+server:
+	target-fetch-policy: "0 0 0 0 0"
+	qname-minimisation: no
+	module-config: "cluster iterator"
+
+cluster:
+	cluster-peer: 10.0.0.1
+	cluster-peer: 10.0.0.2
+	cluster-peer: 10.0.0.3
+	cluster-self: 10.0.0.1
+	cluster-timeout: 100
+	cluster-exclude: "example.com"
+
+stub-zone:
+	name: "example.com"
+	stub-addr: 192.0.2.1
+CONFIG_END
+
+SCENARIO_BEGIN Cluster: a name under a cluster-exclude zone is resolved locally.
+; www.example.com is owned by 10.0.0.3, but example.com is excluded.
+
+; the authority, that is used when the query is resolved locally
+RANGE_BEGIN 0 400
+	ADDRESS 192.0.2.1
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA NOERROR
+SECTION QUESTION
+www.example.com. IN A
+SECTION ANSWER
+www.example.com. 3600 IN A 10.20.30.40
+ENTRY_END
+RANGE_END
+
+STEP 1 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+www.example.com. IN A
+ENTRY_END
+
+STEP 10 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+www.example.com. IN A
+SECTION ANSWER
+www.example.com. 3600 IN A 10.20.30.40
+ENTRY_END
+
+SCENARIO_END

@@ -1,0 +1,231 @@
+; config options
+server:
+	target-fetch-policy: "0 0 0 0 0"
+	qname-minimisation: no
+	module-config: "cluster iterator"
+
+cluster:
+	cluster-peer: 10.0.0.1
+	cluster-peer: 10.0.0.2
+	cluster-peer: 10.0.0.3
+	cluster-self: 10.0.0.1
+	cluster-timeout: 100
+
+stub-zone:
+	name: "example.com"
+	stub-addr: 192.0.2.1
+CONFIG_END
+
+SCENARIO_BEGIN Cluster: a silent owner is marked down after three failures, and probed again.
+; h, n, o, t, u, w and x .example.com are owned by 10.0.0.3, that is silent
+; at first, it has never replied, so three failed probes are enough (the
+; down rule also needs one second without a reply, see cluster_alive).
+; Answers of the owner have addresses 10.9.9.x, answers of the
+; authority have 10.8.8.x, so that the source of the answer is visible.
+
+RANGE_BEGIN 0 400
+	ADDRESS 192.0.2.1
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA RD RA NOERROR
+SECTION QUESTION
+h.example.com. IN A
+SECTION ANSWER
+h.example.com. 3600 IN A 10.8.8.1
+ENTRY_END
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA RD RA NOERROR
+SECTION QUESTION
+n.example.com. IN A
+SECTION ANSWER
+n.example.com. 3600 IN A 10.8.8.2
+ENTRY_END
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA RD RA NOERROR
+SECTION QUESTION
+o.example.com. IN A
+SECTION ANSWER
+o.example.com. 3600 IN A 10.8.8.3
+ENTRY_END
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA RD RA NOERROR
+SECTION QUESTION
+x.example.com. IN A
+SECTION ANSWER
+x.example.com. 3600 IN A 10.8.8.4
+ENTRY_END
+RANGE_END
+
+; the owner is back from step 85
+RANGE_BEGIN 85 400
+	ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA RD RA NOERROR
+SECTION QUESTION
+t.example.com. IN A
+SECTION ANSWER
+t.example.com. 3600 IN A 10.9.9.5
+ENTRY_END
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA RD RA NOERROR
+SECTION QUESTION
+u.example.com. IN A
+SECTION ANSWER
+u.example.com. 3600 IN A 10.9.9.6
+ENTRY_END
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA RD RA NOERROR
+SECTION QUESTION
+w.example.com. IN A
+SECTION ANSWER
+w.example.com. 3600 IN A 10.9.9.7
+ENTRY_END
+RANGE_END
+
+; three timeouts
+STEP 1 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+h.example.com. IN A
+ENTRY_END
+
+STEP 5 TIME_PASSES ELAPSE 0.11
+
+STEP 10 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+h.example.com. IN A
+SECTION ANSWER
+h.example.com. 3600 IN A 10.8.8.1
+ENTRY_END
+
+STEP 20 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+n.example.com. IN A
+ENTRY_END
+
+STEP 25 TIME_PASSES ELAPSE 0.11
+
+STEP 30 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+n.example.com. IN A
+SECTION ANSWER
+n.example.com. 3600 IN A 10.8.8.2
+ENTRY_END
+
+STEP 40 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+o.example.com. IN A
+ENTRY_END
+
+STEP 45 TIME_PASSES ELAPSE 0.11
+
+STEP 50 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+o.example.com. IN A
+SECTION ANSWER
+o.example.com. 3600 IN A 10.8.8.3
+ENTRY_END
+
+; now the owner is down.  The next ranked node for x.example.com is this
+; node, so the name is resolved locally at once, without a wait for the
+; owner.  (The authority answers immediately.)
+STEP 60 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+x.example.com. IN A
+ENTRY_END
+
+STEP 70 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+x.example.com. IN A
+SECTION ANSWER
+x.example.com. 3600 IN A 10.8.8.4
+ENTRY_END
+
+; after the backoff of a second the owner is probed, with a query to it
+STEP 80 TIME_PASSES ELAPSE 1.2
+
+STEP 90 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+t.example.com. IN A
+ENTRY_END
+
+STEP 100 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+t.example.com. IN A
+SECTION ANSWER
+t.example.com. 3600 IN A 10.9.9.5
+ENTRY_END
+
+; a second success makes the owner up again
+STEP 110 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+u.example.com. IN A
+ENTRY_END
+
+STEP 120 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+u.example.com. IN A
+SECTION ANSWER
+u.example.com. 3600 IN A 10.9.9.6
+ENTRY_END
+
+STEP 130 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+w.example.com. IN A
+ENTRY_END
+
+STEP 140 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+w.example.com. IN A
+SECTION ANSWER
+w.example.com. 3600 IN A 10.9.9.7
+ENTRY_END
+
+SCENARIO_END

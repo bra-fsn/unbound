@@ -183,6 +183,10 @@ There are several commands that the server understands.
     :ref:`msg-buffer-size<unbound.conf.msg-buffer-size>`,
     any **\*-slabs** options and
     :ref:`statistics-interval<unbound.conf.statistics-interval>` changes.
+    The options in the :ref:`cluster<unbound.conf.cluster>` section, that
+    configure the cluster module, are also not loaded by fast_reload, the
+    cluster module keeps using the settings it was started with.
+    Use ``reload`` to change them.
 
     For :ref:`dnstap<unbound.conf.dnstap>` these options can be changed:
     :ref:`dnstap-log-resolver-query-messages<unbound.conf.dnstap.dnstap-log-resolver-query-messages>`,
@@ -406,6 +410,55 @@ There are several commands that the server understands.
 @@UAHL@unbound-control.commands@lookup@@ *name*
     Print to stdout the name servers that would be used to look up the name
     specified.
+
+
+@@UAHL@unbound-control.commands@cluster_status@@ [``+c``]
+    Print the state of the :ref:`cluster<unbound.conf.cluster>` module.
+    The first line has the address of this instance and the settings.
+    Then follows a line for every cluster member, with its state (``up``,
+    ``down`` or ``probing``), the number of consecutive failures, the time
+    since the last success, the current probe backoff in milliseconds and the
+    number of queries sent to the member (``routed``), accepted answers
+    (``answered``) and failed queries (``failed``).
+    The health of the member is shown with ``probe_ok``, the success rate of
+    the cache probes in percent, ``srtt``, the smoothed round trip time of the
+    probes in milliseconds (``-`` without samples), ``res_ok``, the success
+    rate of the requests to resolve in percent, and ``res_state``: ``ok``,
+    ``ejected(<s> left)`` for a member that is resolve-ejected, where the
+    cache misses are resolved locally without asking it, or ``trial`` when the
+    ejection time is over and a trial request is allowed or outstanding.
+    The line for this instance has the word ``self`` at the end.
+    The member table is that of the process that handles the command, in
+    multi-process operation (no thread support) the other processes are not
+    shown.
+
+    The ``+c`` option adds a last line with the redundancy of the cache: the
+    number of entries in the message cache (``cache.msg.total``), and how many
+    are for names that this instance owns (``cache.msg.owned``), how many are
+    for names owned by another member (``cache.msg.nonowned``) and how many
+    are for names under a
+    :ref:`cluster-exclude<unbound.conf.cluster.cluster-exclude>` zone, that
+    every member resolves itself (``cache.msg.excluded``).
+    These are found by looking at every entry of the message cache, bin by
+    bin without holding a lock for long, but the cost is proportional to the
+    size of the cache, with a few hash calculations for every entry.
+    It runs in the thread that handles the remote control, the first worker
+    thread, that does not answer queries while the scan runs; on a cache
+    with millions of entries this can take seconds.
+    Without the option the cache is not scanned.
+
+    Prints an error when the cluster module is not enabled.
+
+
+@@UAHL@unbound-control.commands@cluster_lookup@@ *name*
+    Print the order in which the cluster members are ranked for the name,
+    the first is the owner of the name.
+    For every member, the rank, the address, the score (hexadecimal) and the
+    state is printed, and the word ``self`` for this instance.
+    The first line says if this instance owns the name.
+    It also prints if the A and AAAA records of the name are in the local
+    message cache, with the remaining TTL.
+    Prints an error when the cluster module is not enabled.
 
 
 @@UAHL@unbound-control.commands@flush@@ [``+c``] *name*
@@ -1386,6 +1439,99 @@ Extended Statistics
     Number of queries answered from the external cache of cachedb.
     These are counted as cachemiss by the main counters, but hit the cachedb
     external cache after getting processed by the cachedb module.
+
+@@UAHL@unbound-control.stats@cluster.routed@@
+    Only printed when the :ref:`cluster<unbound.conf.cluster>` module is
+    configured.
+    The cluster counters are totals over all threads, and follow the reset
+    of ``stats`` and ``flush_stats`` like the other counters.
+    In multi-process operation (no thread support) only the counters of the
+    process that handles the command are printed.
+    Number of queries sent to the cluster member that owns the name, the
+    cache probe step.
+
+
+@@UAHL@unbound-control.stats@cluster.answered@@
+    Number of answers from the owner that were used.
+
+
+@@UAHL@unbound-control.stats@cluster.answered.cachehit@@
+    Of the answered, the number that the owner answered from its cache.
+
+
+@@UAHL@unbound-control.stats@cluster.probe.miss@@
+    Number of cache probes where the owner did not have the answer in its
+    cache, and was then asked to resolve it.
+
+
+@@UAHL@unbound-control.stats@cluster.failed@@
+    Number of queries to the owner that failed: timeout, error or an
+    answer that was not used, in the cache probe or in the request to
+    resolve.
+    Only failures of the cache probe count against the health of the owner.
+
+
+@@UAHL@unbound-control.stats@cluster.timeout@@
+    Of the failed, the number where the deadline of the cache probe
+    (:ref:`cluster-timeout<unbound.conf.cluster.cluster-timeout>`) passed.
+
+
+@@UAHL@unbound-control.stats@cluster.resolve_timeout@@
+    Of the failed, the number where the deadline of the request to resolve
+    (the discard budget of the client query, at most 3 seconds) passed.
+    A request that fails earlier, because of an error of the outgoing query to
+    the owner, is counted as failed only.
+    This does not count against the liveness of the owner.
+
+
+@@UAHL@unbound-control.stats@cluster.fallback@@
+    Number of queries resolved locally after a failure of the owner.
+
+
+@@UAHL@unbound-control.stats@cluster.charged@@
+    Number of failures of a request to resolve that were charged to the
+    owner: the owner failed it, and the query was then resolved locally with
+    an answer within 500 milliseconds.
+    A local resolution that is slow or fails is not charged, the upstream is
+    then slow or broken for everyone.
+
+
+@@UAHL@unbound-control.stats@cluster.resolve_ejected@@
+    Number of cache misses where the owner was not asked to resolve the name,
+    because it is resolve-ejected after charged failures, and the query was
+    resolved locally.
+
+
+@@UAHL@unbound-control.stats@cluster.self@@
+    Number of cache misses for names that this instance owns itself.
+
+
+@@UAHL@unbound-control.stats@cluster.excluded@@
+    Number of queries that were not routed, because of
+    cluster-exclude, EDNS client subnet, no recursion desired, a class other
+    than IN, priming, or because the query is part of a query of a peer.
+
+
+@@UAHL@unbound-control.stats@cluster.nolive@@
+    Number of cache misses where no cluster member was available to route
+    to, because they are all down.
+
+
+@@UAHL@unbound-control.stats@cluster.served@@
+    Owner side: number of requests of other members to resolve a name, that
+    were not answered from the cache of this instance.
+    The requests that this instance answered from its cache are not counted
+    here, the requester counts those as ``cluster.answered.cachehit``.
+
+
+@@UAHL@unbound-control.stats@cluster.served.probe_miss@@
+    Owner side: number of cache probes from other members that missed in the
+    cache and got an answer of REFUSED with the miss flag.
+
+
+@@UAHL@unbound-control.stats@cluster.version_mismatch@@
+    Number of queries with a cluster EDNS option of a version that is not
+    understood.
 
 @@UAHL@unbound-control.stats@num.rpz.action@@.<rpz_action>
     Number of queries answered using configured RPZ policy, per RPZ action

@@ -1,0 +1,578 @@
+; config options
+server:
+	target-fetch-policy: "0 0 0 0 0"
+	qname-minimisation: no
+	; no client budget: the step 2 deadline is the cap, CLUSTER_RESOLVE_MAX (3 s)
+	discard-timeout: 0
+	module-config: "cluster iterator"
+
+cluster:
+	cluster-peer: 10.0.0.1
+	cluster-peer: 10.0.0.2
+	cluster-peer: 10.0.0.3
+	cluster-self: 10.0.0.1
+	cluster-timeout: 100
+
+stub-zone:
+	name: "example.com"
+	stub-addr: 192.0.2.1
+CONFIG_END
+
+SCENARIO_BEGIN Cluster: the resolve step is a UDP query, governed by the module deadline, it is never sent again.
+; UDP_TIMEOUTS: the pending UDP queries time out by themselves, with the
+; timeout of the infra cache (376 msec unless raised), as the outside network
+; does.  This is what the RTO floor of the resolve step is for.
+UDP_TIMEOUTS
+; h, n, o, r, t, u, w are owned by 10.0.0.3.  The owner misses the cache
+; probe, then recurses for the resolve request (step 2), a UDP query too.  A
+; slow answer, at 1.5 s and at 2.9 s, is used with no fallback and with no
+; second query: the outgoing UDP timeout is raised to the module deadline
+; (3 s), so it neither times out nor sends the query again before that.  A
+; timeout or an error of the outgoing query is a failure of step 2: the query
+; is resolved locally at once, the resolve request is not sent again (a
+; second query would be left pending, which testbound reports), and the
+; owner is not marked down (it is probed for the next names).  The deadline
+; passing is the same.  Answers of the owner have addresses 10.9.9.x, of the
+; authority 10.8.8.x.
+RANGE_BEGIN 0 1000
+	ADDRESS 192.0.2.1
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA NOERROR
+SECTION QUESTION
+h.example.com. IN A
+SECTION ANSWER
+h.example.com. 3600 IN A 10.8.8.1
+ENTRY_END
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA NOERROR
+SECTION QUESTION
+n.example.com. IN A
+SECTION ANSWER
+n.example.com. 3600 IN A 10.8.8.2
+ENTRY_END
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA NOERROR
+SECTION QUESTION
+o.example.com. IN A
+SECTION ANSWER
+o.example.com. 3600 IN A 10.8.8.3
+ENTRY_END
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA NOERROR
+SECTION QUESTION
+r.example.com. IN A
+SECTION ANSWER
+r.example.com. 3600 IN A 10.8.8.4
+ENTRY_END
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA NOERROR
+SECTION QUESTION
+t.example.com. IN A
+SECTION ANSWER
+t.example.com. 3600 IN A 10.8.8.5
+ENTRY_END
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA NOERROR
+SECTION QUESTION
+u.example.com. IN A
+SECTION ANSWER
+u.example.com. 3600 IN A 10.8.8.6
+ENTRY_END
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA NOERROR
+SECTION QUESTION
+w.example.com. IN A
+SECTION ANSWER
+w.example.com. 3600 IN A 10.8.8.7
+ENTRY_END
+RANGE_END
+
+; a slow answer at 1.5 s is used, there is no second query
+STEP 10 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+h.example.com. IN A
+ENTRY_END
+
+STEP 20 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+h.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 03
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 30 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA REFUSED
+SECTION QUESTION
+h.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 09
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 40 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+h.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 50 TIME_PASSES ELAPSE 1.5
+
+STEP 60 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+h.example.com. IN A
+SECTION ANSWER
+h.example.com. 3600 IN A 10.9.9.1
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 70 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+h.example.com. IN A
+SECTION ANSWER
+h.example.com. 3600 IN A 10.9.9.1
+ENTRY_END
+
+; an answer just before the deadline is used
+STEP 80 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+n.example.com. IN A
+ENTRY_END
+
+STEP 90 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+n.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 03
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 100 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA REFUSED
+SECTION QUESTION
+n.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 09
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 110 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+n.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 120 TIME_PASSES ELAPSE 2.9
+
+STEP 130 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+n.example.com. IN A
+SECTION ANSWER
+n.example.com. 3600 IN A 10.9.9.2
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 140 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+n.example.com. IN A
+SECTION ANSWER
+n.example.com. 3600 IN A 10.9.9.2
+ENTRY_END
+
+; the timeout of the outgoing query: local fallback at once, no resend
+STEP 150 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+o.example.com. IN A
+ENTRY_END
+
+STEP 160 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+o.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 03
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 170 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA REFUSED
+SECTION QUESTION
+o.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 09
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 180 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+o.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 190 TIMEOUT
+
+STEP 200 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+o.example.com. IN A
+SECTION ANSWER
+o.example.com. 3600 IN A 10.8.8.3
+ENTRY_END
+
+; an error of the outgoing query: local fallback at once, no resend
+STEP 210 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+r.example.com. IN A
+ENTRY_END
+
+STEP 220 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+r.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 03
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 230 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA REFUSED
+SECTION QUESTION
+r.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 09
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 240 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+r.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 250 ERROR
+
+STEP 260 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+r.example.com. IN A
+SECTION ANSWER
+r.example.com. 3600 IN A 10.8.8.4
+ENTRY_END
+
+; no step 2 outcome is a health failure: the owner is probed and answers for the next names
+STEP 270 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+u.example.com. IN A
+ENTRY_END
+
+STEP 280 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+u.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 03
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 290 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+u.example.com. IN A
+SECTION ANSWER
+u.example.com. 3600 IN A 10.9.9.6
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 05
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 300 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+u.example.com. IN A
+SECTION ANSWER
+u.example.com. 3600 IN A 10.9.9.6
+ENTRY_END
+
+; the owner never answers: the module deadline passes, local fallback
+STEP 310 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+t.example.com. IN A
+ENTRY_END
+
+STEP 320 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+t.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 03
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 330 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA REFUSED
+SECTION QUESTION
+t.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 09
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 340 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+t.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 350 TIME_PASSES ELAPSE 3.1
+
+STEP 360 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+t.example.com. IN A
+SECTION ANSWER
+t.example.com. 3600 IN A 10.8.8.5
+ENTRY_END
+
+; the cache probe is a UDP query, sent again when the outgoing query times out before the probe deadline (cluster-timeout)
+STEP 370 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+w.example.com. IN A
+ENTRY_END
+
+STEP 380 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+w.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 03
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 390 TIME_PASSES ELAPSE 0.01
+
+STEP 400 TIMEOUT
+
+STEP 410 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+w.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 03
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 420 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+w.example.com. IN A
+SECTION ANSWER
+w.example.com. 3600 IN A 10.9.9.7
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 05
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 430 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+w.example.com. IN A
+SECTION ANSWER
+w.example.com. 3600 IN A 10.9.9.7
+ENTRY_END
+
+SCENARIO_END

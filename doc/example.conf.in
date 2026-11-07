@@ -1415,6 +1415,26 @@ remote-control:
 #     # redis logical database to use for the replica server, 0 is the default database.
 #     redis-replica-logical-db: 0
 
+# Cluster
+# Share the cache between cooperating Unbound instances.
+# To enable, use --enable-cluster to configure before compiling.
+# The 'cluster' module must be included in module-config, for example
+# module-config: "validator cluster iterator"
+# cluster:
+#     # members of the cluster, repeat for every member, include this one.
+#     # the syntax is address[@port].
+#     cluster-peer: 10.0.0.11
+#     cluster-peer: 10.0.0.12
+#     # port defaults to the server port.
+#     # address of this instance, if not detected from the interface: list.
+#     cluster-self: 10.0.0.11
+#     # cap on the TTL of answers not owned by this instance, 0 is no cap.
+#     cluster-local-ttl-max: 0
+#     # time in msec to wait for the owner before resolving locally.
+#     cluster-timeout: 100
+#     # zones that are always resolved locally, can be repeated.
+#     cluster-exclude: "corp.internal"
+
 # IPSet
 # Add specify domain into set via ipset.
 # To enable:

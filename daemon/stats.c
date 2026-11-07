@@ -63,6 +63,9 @@
 #include "services/authzone.h"
 #include "validator/val_kcache.h"
 #include "validator/val_neg.h"
+#ifdef USE_CLUSTER
+#include "cluster/cluster.h"
+#endif
 #ifdef CLIENT_SUBNET
 #include "edns-subnet/subnetmod.h"
 #endif
@@ -350,6 +353,19 @@ server_stats_compile(struct worker* worker, struct ub_stats_info* s, int reset)
 #else
 	s->svr.mem_quic = 0;
 #endif /* HAVE_NGTCP2 */
+
+#ifdef USE_CLUSTER
+	/* Snapshot the live counters of the cluster module of this thread
+	 * for the remote control thread.  This runs in this worker thread,
+	 * when the remote thread asked for stats over the tube (or directly
+	 * for thread 0), the reset happens in worker_stats_clear below. */
+	{
+		struct cluster_env* ce = cluster_env_find(
+			&worker->env.mesh->mods, &worker->env);
+		if(ce)
+			cluster_stats_snapshot(ce, worker->thread_num);
+	}
+#endif
 
 	/* Set neg cache usage numbers */
 	set_neg_cache_stats(worker, &s->svr, reset);

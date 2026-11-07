@@ -1,3 +1,13 @@
+7 November 2026: bra-fsn
+	- Add the optional cluster module, configure with --enable-cluster.
+	  It lets cooperating unbound instances share their caches, by
+	  sending a cache miss to the instance that owns the name. With the
+	  cluster: configuration section, the cluster_status and
+	  cluster_lookup unbound-control commands and cluster.* statistics.
+	- cluster: health model v2: resolution health by paired
+	  attribution with resolve-ejection, and a resolve deadline that
+	  follows the discard budget of the client query.
+
 5 November 2026: Wouter
 	- Fix handling of SOA probe reply for secondary zone transfer
 	  that contains an extended label type. Thanks to Qifan Zhang

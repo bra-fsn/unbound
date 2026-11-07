@@ -1,0 +1,146 @@
+# #-- cluster_control.test --#
+# source the master var file when it's there
+[ -f ../.tpkg.var.master ] && source ../.tpkg.var.master
+# use .tpkg.var.test for in test variable passing
+[ -f .tpkg.var.test ] && source .tpkg.var.test
+. ../common.sh
+
+PRE="../.."
+
+fail () {
+	echo "FAIL: $1"
+	exit 1
+}
+
+# ctl <A|B|AUTH> args...: run unbound-control against an instance
+ctl () {
+	local n=$1
+	shift
+	case $n in
+	A) cfg=ub_A.conf;;
+	B) cfg=ub_B.conf;;
+	*) cfg=ub_auth.conf;;
+	esac
+	$PRE/unbound-control -c $cfg "$@"
+}
+
+# query <A|B> name: send a recursive query over UDP
+query () {
+	local port
+	if test $1 = A; then port=$PORT_A; else port=$PORT_B; fi
+	echo "> streamtcp -u -f 127.0.0.1@$port $2 A IN"
+	$PRE/streamtcp -u -f 127.0.0.1@$port $2 A IN > outfile 2>&1
+	cat outfile
+	grep "192.0.2.1" outfile >/dev/null || fail "no answer for $2 from $1"
+}
+
+# stat <A|B> counter [cmd]: print the value of the cluster counter
+cstat () {
+	ctl $1 ${3:-stats_noreset} | grep "^cluster\.$2=" | sed -e 's/.*=//'
+}
+
+# expect <A|B> counter value [cmd]
+expect () {
+	local v
+	v=`cstat $1 $2 $4`
+	echo "node $1 cluster.$2=$v (expect $3)"
+	test "$v" = "$3" || fail "node $1 cluster.$2 is $v, expected $3"
+}
+
+teststep "stats lines are there, and all zero at the start"
+ctl A stats_noreset | grep "^cluster\." || fail "no cluster stats lines"
+ctl A stats_noreset | grep "^cluster\." | grep -v "=0$" && fail "nonzero at start"
+# the server without the cluster module has no cluster lines
+ctl AUTH stats_noreset | grep "^cluster\." && fail "cluster lines without module"
+
+teststep "the commands without the module"
+ctl AUTH cluster_status | grep "error cluster module not enabled" || fail "no error for cluster_status"
+ctl AUTH cluster_lookup www.example.com | grep "error cluster module not enabled" || fail "no error for cluster_lookup"
+
+teststep "find names that are owned by B, as seen from A, and by A"
+OWNED_B=""
+OWNED_B2=""
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
+	ctl A cluster_lookup n$i.example.com > lookup.out
+	if grep "^name=.* owned=no" lookup.out >/dev/null; then
+		if test -z "$OWNED_B"; then OWNED_B=n$i.example.com;
+		elif test -z "$OWNED_B2"; then OWNED_B2=n$i.example.com; fi
+	fi
+done
+echo "owned by B: $OWNED_B $OWNED_B2"
+test -n "$OWNED_B" -a -n "$OWNED_B2" || fail "no names owned by B found"
+
+teststep "cluster_lookup output"
+ctl A cluster_lookup $OWNED_B | tee lookup.out
+grep "^name=$OWNED_B. owned=no" lookup.out || fail "lookup name line"
+grep "^rank=1 peer=127.0.0.1@$PORT_B score=[0-9a-f]\{16\} state=up$" lookup.out || fail "rank 1 is not B"
+grep "^rank=2 peer=127.0.0.1@$PORT_A score=[0-9a-f]\{16\} state=up self$" lookup.out || fail "rank 2 is not A self"
+grep "^cache.A=miss" lookup.out || fail "A is cached"
+# the other node sees the same ranking and owns the name
+ctl B cluster_lookup $OWNED_B | tee lookup_b.out
+grep "^name=$OWNED_B. owned=yes" lookup_b.out || fail "B does not own it"
+grep "^rank=1 peer=127.0.0.1@$PORT_B .* self$" lookup_b.out || fail "B rank 1 not self"
+ctl A cluster_lookup 2>&1 | grep "error" || fail "no error for missing name"
+
+teststep "a query on A for a name owned by B"
+query A $OWNED_B
+expect A routed 1 stats_noreset
+expect A answered 1
+expect A probe.miss 1
+expect A answered.cachehit 0
+expect A failed 0
+expect A fallback 0
+expect B served 1
+expect B served.probe_miss 1
+expect B routed 0
+
+teststep "stats_noreset does not reset, stats does"
+expect A routed 1 stats_noreset
+expect A routed 1 stats_noreset
+expect A routed 1 stats
+expect A routed 0 stats_noreset
+expect A answered 0 stats_noreset
+expect B served 1 stats
+expect B served.probe_miss 0
+
+teststep "the answer is cached on A, and not routed again"
+query A $OWNED_B
+expect A routed 0
+ctl A cluster_lookup $OWNED_B | grep "^cache.A=hit ttl=[0-9]" || fail "not cached on A"
+
+teststep "an owner cache hit"
+# B resolves the name by a normal query to itself
+query B $OWNED_B2
+expect B served 0
+query A $OWNED_B2
+expect A routed 1
+expect A answered 1
+expect A answered.cachehit 1
+expect A probe.miss 0
+expect B served 0
+expect B served.probe_miss 0
+
+teststep "flush_stats resets the cluster counters"
+ctl A flush_stats
+expect A routed 0
+expect A answered 0
+expect A answered.cachehit 0
+expect A charged 0
+expect A resolve_ejected 0
+
+teststep "cluster_status"
+ctl A cluster_status | tee status.out
+grep "^self=127.0.0.1@$PORT_A peers=2 timeout=500 local-ttl-max=0$" status.out || fail "self line"
+grep "^peer=127.0.0.1@$PORT_A state=up fails=0 last_ok=.* probe_backoff=0 routed=0 answered=0 failed=0 probe_ok=100% srtt=- res_ok=100% res_state=ok self$" status.out || fail "peer A line"
+grep "^peer=127.0.0.1@$PORT_B state=up fails=0 last_ok=[0-9]*s probe_backoff=0 routed=[1-9] answered=[1-9] failed=0 probe_ok=100% srtt=[0-9]*\.[0-9] res_ok=100% res_state=ok$" status.out || fail "peer B line"
+grep "^cache.msg" status.out && fail "cache scan without +c"
+ctl A cluster_status +c | tee status_c.out
+grep "^peer=127.0.0.1@$PORT_B state=up" status_c.out || fail "peer B line with +c"
+grep "^cache.msg.total=[1-9][0-9]* cache.msg.owned=[0-9]* cache.msg.nonowned=[1-9][0-9]* cache.msg.excluded=0$" status_c.out || fail "cache line"
+ctl A cluster_status extra 2>&1 | grep "error" || fail "no error for args"
+
+# stop
+ctl A stop
+ctl B stop
+ctl AUTH stop
+exit 0

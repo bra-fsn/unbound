@@ -181,6 +181,10 @@ also not with
 \fI\%msg\-buffer\-size\fP,
 any \fB*\-slabs\fP options and
 \fI\%statistics\-interval\fP changes.
+The options in the \fI\%cluster\fP section, that
+configure the cluster module, are also not loaded by fast_reload, the
+cluster module keeps using the settings it was started with.
+Use \fBreload\fP to change them.
 .sp
 For \fI\%dnstap\fP these options can be changed:
 \fI\%dnstap\-log\-resolver\-query\-messages\fP,
@@ -421,6 +425,57 @@ effort to look up in the cache.
 .B lookup \fIname\fP 
 Print to stdout the name servers that would be used to look up the name
 specified.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B cluster_status [\fB+c\fP] 
+Print the state of the \fI\%cluster\fP module.
+The first line has the address of this instance and the settings.
+Then follows a line for every cluster member, with its state (\fBup\fP,
+\fBdown\fP or \fBprobing\fP), the number of consecutive failures, the time
+since the last success, the current probe backoff in milliseconds and the
+number of queries sent to the member (\fBrouted\fP), accepted answers
+(\fBanswered\fP) and failed queries (\fBfailed\fP).
+The health of the member is shown with \fBprobe_ok\fP, the success rate of
+the cache probes in percent, \fBsrtt\fP, the smoothed round trip time of the
+probes in milliseconds (\fB\-\fP without samples), \fBres_ok\fP, the success
+rate of the requests to resolve in percent, and \fBres_state\fP: \fBok\fP,
+\fBejected(<s> left)\fP for a member that is resolve\-ejected, where the
+cache misses are resolved locally without asking it, or \fBtrial\fP when the
+ejection time is over and a trial request is allowed or outstanding.
+The line for this instance has the word \fBself\fP at the end.
+The member table is that of the process that handles the command, in
+multi\-process operation (no thread support) the other processes are not
+shown.
+.sp
+The \fB+c\fP option adds a last line with the redundancy of the cache: the
+number of entries in the message cache (\fBcache.msg.total\fP), and how many
+are for names that this instance owns (\fBcache.msg.owned\fP), how many are
+for names owned by another member (\fBcache.msg.nonowned\fP) and how many
+are for names under a
+\fI\%cluster\-exclude\fP zone, that
+every member resolves itself (\fBcache.msg.excluded\fP).
+These are found by looking at every entry of the message cache, bin by
+bin without holding a lock for long, but the cost is proportional to the
+size of the cache, with a few hash calculations for every entry.
+It runs in the thread that handles the remote control, the first worker
+thread, that does not answer queries while the scan runs; on a cache
+with millions of entries this can take seconds.
+Without the option the cache is not scanned.
+.sp
+Prints an error when the cluster module is not enabled.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B cluster_lookup \fIname\fP 
+Print the order in which the cluster members are ranked for the name,
+the first is the owner of the name.
+For every member, the rank, the address, the score (hexadecimal) and the
+state is printed, and the word \fBself\fP for this instance.
+The first line says if this instance owns the name.
+It also prints if the A and AAAA records of the name are in the local
+message cache, with the remaining TTL.
+Prints an error when the cluster module is not enabled.
 .UNINDENT
 .INDENT 0.0
 .TP
@@ -1557,6 +1612,116 @@ module.
 Number of queries answered from the external cache of cachedb.
 These are counted as cachemiss by the main counters, but hit the cachedb
 external cache after getting processed by the cachedb module.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B cluster.routed 
+Only printed when the \fI\%cluster\fP module is
+configured.
+The cluster counters are totals over all threads, and follow the reset
+of \fBstats\fP and \fBflush_stats\fP like the other counters.
+In multi\-process operation (no thread support) only the counters of the
+process that handles the command are printed.
+Number of queries sent to the cluster member that owns the name, the
+cache probe step.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B cluster.answered 
+Number of answers from the owner that were used.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B cluster.answered.cachehit 
+Of the answered, the number that the owner answered from its cache.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B cluster.probe.miss 
+Number of cache probes where the owner did not have the answer in its
+cache, and was then asked to resolve it.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B cluster.failed 
+Number of queries to the owner that failed: timeout, error or an
+answer that was not used, in the cache probe or in the request to
+resolve.
+Only failures of the cache probe count against the health of the owner.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B cluster.timeout 
+Of the failed, the number where the deadline of the cache probe
+(\fI\%cluster\-timeout\fP) passed.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B cluster.resolve_timeout 
+Of the failed, the number where the deadline of the request to resolve
+(the discard budget of the client query, at most 3 seconds) passed.
+A request that fails earlier, because of an error of the outgoing query to
+the owner, is counted as failed only.
+This does not count against the liveness of the owner.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B cluster.fallback 
+Number of queries resolved locally after a failure of the owner.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B cluster.charged 
+Number of failures of a request to resolve that were charged to the
+owner: the owner failed it, and the query was then resolved locally with
+an answer within 500 milliseconds.
+A local resolution that is slow or fails is not charged, the upstream is
+then slow or broken for everyone.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B cluster.resolve_ejected 
+Number of cache misses where the owner was not asked to resolve the name,
+because it is resolve\-ejected after charged failures, and the query was
+resolved locally.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B cluster.self 
+Number of cache misses for names that this instance owns itself.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B cluster.excluded 
+Number of queries that were not routed, because of
+cluster\-exclude, EDNS client subnet, no recursion desired, a class other
+than IN, priming, or because the query is part of a query of a peer.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B cluster.nolive 
+Number of cache misses where no cluster member was available to route
+to, because they are all down.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B cluster.served 
+Owner side: number of requests of other members to resolve a name, that
+were not answered from the cache of this instance.
+The requests that this instance answered from its cache are not counted
+here, the requester counts those as \fBcluster.answered.cachehit\fP\&.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B cluster.served.probe_miss 
+Owner side: number of cache probes from other members that missed in the
+cache and got an answer of REFUSED with the miss flag.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B cluster.version_mismatch 
+Number of queries with a cluster EDNS option of a version that is not
+understood.
 .UNINDENT
 .INDENT 0.0
 .TP

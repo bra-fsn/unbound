@@ -146,6 +146,10 @@ usage(void)
 	printf("  cache_lookup [+t] <names>	print rrsets and msgs at or under the names\n");
 	printf("		+t		allow tld and root names.\n");
 	printf("  lookup <name>			print nameservers for name\n");
+	printf("  cluster_status [+c]		print cluster peers and their state\n");
+	printf("		+c		scan the cache for redundancy (slow\n");
+	printf("				on large caches). (cluster module)\n");
+	printf("  cluster_lookup <name>		print the cluster owner ranking for name\n");
 	printf("  flush [+c] <name>			flushes common types for name from cache\n");
 	printf("  				types:  A, AAAA, MX, PTR, NS,\n");
 	printf("					SOA, CNAME, DNAME, SRV, NAPTR\n");

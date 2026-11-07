@@ -1,0 +1,127 @@
+; config options
+server:
+	target-fetch-policy: "0 0 0 0 0"
+	qname-minimisation: no
+	module-config: "validator cluster iterator"
+
+cluster:
+	cluster-peer: 10.0.0.1
+	cluster-peer: 10.0.0.2
+	cluster-peer: 10.0.0.3
+	cluster-self: 10.0.0.1
+	cluster-timeout: 100
+
+stub-zone:
+	name: "example.com"
+	stub-addr: 192.0.2.1
+CONFIG_END
+
+SCENARIO_BEGIN Cluster: step 1 probe misses, the owner is asked to resolve, a slow resolve is within the resolve deadline.
+; www.example.com is owned by 10.0.0.3.  The authority 192.0.2.1 has no
+; range, it must not be queried.  The owner answers REFUSED with the MISS
+; flag to the CACHE_ONLY probe, then gets the recursive query without the
+; CACHE_ONLY flag, and takes longer than cluster-timeout (100 ms) to answer.
+
+STEP 1 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+www.example.com. IN A
+ENTRY_END
+
+STEP 2 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+www.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8           ; CLUSTER option
+		00 0a           ; length 10
+		01 03           ; version 1, flags
+		c1 68 3f 06 a9 43 ed 49 ; node id
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 3 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA REFUSED
+SECTION QUESTION
+www.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8           ; CLUSTER option
+		00 0a           ; length 10
+		01 09           ; version 1, flags
+		00 00 00 00 00 00 00 03 ; node id
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 4 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+www.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8           ; CLUSTER option
+		00 0a           ; length 10
+		01 01           ; version 1, flags
+		c1 68 3f 06 a9 43 ed 49 ; node id
+	HEX_EDNSDATA_END
+ENTRY_END
+
+; longer than the cluster-timeout, shorter than the resolve deadline
+STEP 5 TIME_PASSES ELAPSE 0.5
+
+STEP 6 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+www.example.com. IN A
+SECTION ANSWER
+www.example.com. 3600 IN A 10.20.30.40
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8           ; CLUSTER option
+		00 0a           ; length 10
+		01 01           ; version 1, flags
+		00 00 00 00 00 00 00 03 ; node id
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 7 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+www.example.com. IN A
+SECTION ANSWER
+www.example.com. 3600 IN A 10.20.30.40
+ENTRY_END
+
+; no timer fires later, and the answer is in the cache: no query is sent
+STEP 8 TIME_PASSES ELAPSE 3.0
+
+STEP 10 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+www.example.com. IN A
+ENTRY_END
+
+STEP 11 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+www.example.com. IN A
+SECTION ANSWER
+www.example.com. 3600 IN A 10.20.30.40
+ENTRY_END
+
+SCENARIO_END

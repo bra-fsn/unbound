@@ -105,6 +105,9 @@
 #include "edns-subnet/subnetmod.h"
 #include "edns-subnet/addrtree.h"
 #endif
+#ifdef USE_CLUSTER
+#include "cluster/cluster.h"
+#endif
 
 #ifdef HAVE_SYS_TYPES_H
 #  include <sys/types.h>
@@ -1238,6 +1241,38 @@ print_ext(RES* ssl, struct ub_stats_info* s, int inhibit_zero)
 	return 1;
 }
 
+#ifdef USE_CLUSTER
+/** print callback for the cluster module, to the remote control */
+static int
+cluster_print(void* arg, const char* format, ...)
+{
+	va_list args;
+	int ret;
+	va_start(args, format);
+	ret = ssl_print_vmsg((RES*)arg, format, args);
+	va_end(args);
+	return ret;
+}
+
+/** do the cluster_status command, with the optional +c argument */
+static void
+do_cluster_status(RES* ssl, struct worker* worker, char* arg)
+{
+	if(*arg != 0 && strcmp(arg, "+c") != 0) {
+		(void)ssl_printf(ssl, "error cluster_status takes the "
+			"optional argument +c\n");
+		return;
+	}
+	cluster_cmd_status(&worker->env, cluster_print, ssl,
+#ifdef THREADS_DISABLED
+		worker->daemon->num > 1,
+#else
+		0,
+#endif
+		*arg != 0);
+}
+#endif /* USE_CLUSTER */
+
 /** do the stats command */
 static void
 do_stats(RES* ssl, struct worker* worker, int reset)
@@ -1271,6 +1306,10 @@ do_stats(RES* ssl, struct worker* worker, int reset)
 		if(!print_ext(ssl, &total, daemon->cfg->stat_inhibit_zero))
 			return;
 	}
+#ifdef USE_CLUSTER
+	if(!cluster_print_stats(&worker->env, cluster_print, ssl))
+		return;
+#endif
 }
 
 /** parse commandline argument domain name */
@@ -4173,6 +4212,21 @@ execute_cmd(struct daemon_remote* rc, struct rc_state* s, RES* ssl, char* cmd,
 		if(rc) distribute_cmd(rc, ssl, cmd);
 		do_flush_requestlist(ssl, worker);
 		return;
+	} else if(cmdcmp(p, "cluster_status", 14)) {
+#ifdef USE_CLUSTER
+		do_cluster_status(ssl, worker, skipwhite(p+14));
+#else
+		(void)ssl_printf(ssl, "error cluster module not enabled\n");
+#endif
+		return;
+	} else if(cmdcmp(p, "cluster_lookup", 14)) {
+#ifdef USE_CLUSTER
+		cluster_cmd_lookup(&worker->env, cluster_print, ssl,
+			skipwhite(p+14));
+#else
+		(void)ssl_printf(ssl, "error cluster module not enabled\n");
+#endif
+		return;
 	} else if(cmdcmp(p, "cache_lookup", 12)) {
 		do_cache_lookup(ssl, worker, skipwhite(p+12));
 		return;
@@ -5520,6 +5574,11 @@ config_file_getmem(struct config_file* cfg)
 	m += getmem_str(cfg->redis_replica_server_password);
 #endif
 #endif
+#ifdef USE_CLUSTER
+	m += getmem_config_strlist(cfg->cluster_peer);
+	m += getmem_str(cfg->cluster_self);
+	m += getmem_config_strlist(cfg->cluster_exclude);
+#endif
 #ifdef USE_IPSET
 	m += getmem_str(cfg->ipset_name_v4);
 	m += getmem_str(cfg->ipset_name_v6);
@@ -6605,6 +6664,13 @@ fr_atomic_copy_cfg(struct config_file* oldcfg, struct config_file* cfg,
 	/* Not copied because the length and content could then not match.
 	   cookie_secret[40], cookie_secret_len
 	*/
+#ifdef USE_CLUSTER
+	COPY_VAR_ptr(cluster_peer);
+	COPY_VAR_ptr(cluster_self);
+	COPY_VAR_int(cluster_local_ttl_max);
+	COPY_VAR_ptr(cluster_exclude);
+	COPY_VAR_int(cluster_timeout);
+#endif
 #ifdef USE_IPSET
 	COPY_VAR_ptr(ipset_name_v4);
 	COPY_VAR_ptr(ipset_name_v6);

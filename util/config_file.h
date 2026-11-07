@@ -771,6 +771,21 @@ struct config_file {
 	int redis_replica_logical_db;
 #endif
 #endif
+	/* cluster module */
+#ifdef USE_CLUSTER
+	/** list of cluster peers, "addr[@port]" strings */
+	struct config_strlist* cluster_peer;
+	/** address of this node in the peer list, or NULL for autodetect */
+	char* cluster_self;
+	/** cap for TTLs of answers for names this node does not own, in
+	 * seconds, 0 is no cap */
+	int cluster_local_ttl_max;
+	/** zones that are always resolved locally */
+	struct config_strlist* cluster_exclude;
+	/** time in msec to wait for the owner peer, before falling back to
+	 * local resolution */
+	int cluster_timeout;
+#endif
 	/** Downstream DNS Cookies */
 	/** do answer with server cookie when request contained cookie option */
 	int do_answer_cookie;

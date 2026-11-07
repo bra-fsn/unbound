@@ -76,6 +76,10 @@ void regional_test(void);
 /** Unit test for ECS functions */
 void ecs_test(void);
 #endif /* CLIENT_SUBNET */
+#ifdef USE_CLUSTER
+/** test cluster module routing */
+void cluster_test(void);
+#endif /* USE_CLUSTER */
 /** unit test for ldns functions */
 void ldns_test(void);
 /** unit test for auth zone functions */

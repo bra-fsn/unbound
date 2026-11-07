@@ -671,6 +671,8 @@ IPSET_OBJ
 IPSET_SRC
 IPSECMOD_HEADER
 IPSECMOD_OBJ
+CLUSTER_OBJ
+CLUSTER_SRC
 CACHEDB_OBJ
 CACHEDB_SRC
 DNSCRYPT_OBJ
@@ -935,6 +937,7 @@ with_protobuf_c
 enable_dnscrypt
 with_libsodium
 enable_cachedb
+enable_cluster
 enable_ipsecmod
 enable_ipset
 with_libmnl
@@ -1639,6 +1642,8 @@ Optional Features:
   --enable-dnscrypt       Enable dnscrypt support (requires libsodium)
   --enable-cachedb        enable cachedb module that can use external cache
                           storage
+  --enable-cluster        enable cluster module that shares the cache between
+                          cooperating unbound instances
   --enable-ipsecmod       Enable ipsecmod module that facilitates
                           opportunistic IPsec
   --enable-ipset          enable ipset module
@@ -25418,6 +25423,28 @@ printf "%s\n" "#define USE_CACHEDB 1" >>confdefs.h
 	CACHEDB_SRC="cachedb/cachedb.c cachedb/redis.c"
 
 	CACHEDB_OBJ="cachedb.lo redis.lo"
+
+    	;;
+    no|*)
+    	# nothing
+    	;;
+esac
+
+# check for cluster if requested
+# Check whether --enable-cluster was given.
+if test ${enable_cluster+y}
+then :
+  enableval=$enable_cluster;
+fi
+
+case "$enable_cluster" in
+    yes)
+
+printf "%s\n" "#define USE_CLUSTER 1" >>confdefs.h
+
+	CLUSTER_SRC="cluster/cluster.c"
+
+	CLUSTER_OBJ="cluster.lo"
 
     	;;
     no|*)

@@ -150,6 +150,10 @@ The recognized section clauses are:
         with second level caches, currently Redis or Redis-complatible
         databases.
 
+    :ref:`cluster:<unbound.conf.cluster>`
+        Configuration for the optional ``cluster`` module that lets cooperating
+        Unbound instances share their caches.
+
     :ref:`dnstap:<unbound.conf.dnstap>`
         Configuration of the optional dnstap logging feature; a flexible,
         structured binary log format for DNS software.
@@ -4964,6 +4968,205 @@ The following ``cachedb:`` options are specific to the ``redis`` backend.
     for the Redis replica server.
 
     Default: 0
+
+
+.. _unbound.conf.cluster:
+
+Cluster Module Options
+----------------------
+
+These options are part of the ``cluster:`` section.
+The cluster options are read when the module starts, so that a change needs
+``unbound-control reload`` (or a restart); ``fast_reload`` does not load them.
+
+The cluster module is not compiled in by default, it needs
+``--enable-cluster`` when configuring, and it must be configured in the
+:ref:`module-config<unbound.conf.module-config>` directive, e.g.:
+
+.. code-block:: text
+
+    module-config: "validator cluster iterator"
+
+The module goes just before the iterator, after the validator, so that
+answers of the cluster members are validated locally.
+With cachedb use ``"validator cachedb cluster iterator"``.
+With dns64 use ``"dns64 validator cluster iterator"``.
+
+The module lets a set of cooperating Unbound instances act as one logical
+cache.
+The module is inactive when no ``cluster-peer`` is configured, and it is
+not active when Unbound is used as the libunbound library.
+The ``cluster:`` options are parsed but ignored, with no effect, when Unbound
+is compiled without ``--enable-cluster``.
+
+The members send each other queries with a cluster EDNS option, the
+:ref:`access-control<unbound.conf.access-control>` of every member must
+allow the queries of the other members.
+The option is only honoured in queries that come from the IP address of a
+``cluster-peer``, queries with the option from other addresses are answered
+like normal client queries.
+The queries of a member must therefore leave from its ``cluster-peer``
+address, on a host with several addresses set
+:ref:`outgoing-interface<unbound.conf.outgoing-interface>` to it.
+
+Every name is owned by one member, chosen by a hash of the name over the
+``cluster-peer`` list.
+On a cache miss for a name that another member owns, the query is sent to the
+owner, first as a probe that is only answered from the cache of the owner,
+and if that misses, as a request to resolve the name.
+The owner resolves the query itself, with its own configuration, and does not
+send it on.
+If the owner does not answer in time, or fails, the query is resolved locally.
+All members must have the same ``cluster-peer`` list, otherwise they do not
+agree on the owners.
+The owner applies its own policy to the query, so the members must also have
+consistent policy configuration: local-zone, RPZ, views and tags, dns64 and
+private-address settings.
+Answers of a member that differs are cached by the other members.
+
+Every member is judged in two independent ways.
+Liveness is judged by the cache probe only.
+A member is marked as down after three consecutive failed cache probes,
+when it has also not sent any valid reply (to a probe, a miss or a resolve
+request) for one second.
+A lossy but alive member, that keeps answering some queries, stays up, the
+queries that are lost fall back to local resolution within the probe deadline.
+A member that is down is probed with a backoff of 1 to 60 seconds, and is up
+again after two successful probes out of the last three.
+The deadline of the cache probe is
+:ref:`cluster-timeout<unbound.conf.cluster.cluster-timeout>`.
+Resolution health is judged from the requests to resolve.
+When the owner fails such a request (SERVFAIL, an unusable answer, or the
+deadline) the query is resolved locally.
+If that succeeds within 500 milliseconds, the failure is charged to the owner,
+a local resolution can do what the owner could not; if the local resolution is
+slow or fails too, the upstream is slow or broken for everyone and nothing is
+charged.
+After three charged failures in a row, or when the success rate over the
+recent requests drops below one half, the owner is resolve-ejected for 10
+seconds, longer for repeated ejection (at most 120 seconds): its cache probes
+are still used when it has the answer, but on a miss the query is resolved
+locally, without asking the owner.
+After that time a single request is allowed as a trial, when it succeeds the
+owner resolves again.
+At most 30 percent of the members, rounded down, are resolve-ejected at once:
+with fewer than four members none is.
+The deadline of the request to resolve is the time that is left of the
+discard budget of the client query
+(:ref:`discard-timeout<unbound.conf.discard-timeout>` after its arrival, at
+least 300 milliseconds), and at most 3 seconds, which is also used when there
+is no client query waiting or discard-timeout is 0.
+When it passes the query is resolved locally; that is not a failure of the
+liveness of the member.
+The request to resolve is sent over UDP, like the cache probe, and without
+retransmission.
+The request can take as long as the owner needs to recurse, and a query that
+is sent again uses a new source port and can be handed to another thread of
+the owner, that then resolves the name a second time while the first answer is
+lost.
+The timeout of the outgoing UDP query is raised to at least the deadline, so
+the deadline governs and not the round trip times of earlier replies.
+An answer that is truncated is fetched over TCP, as Unbound does for any
+query.
+An error of the outgoing query makes the request fail: the query is resolved
+locally, and the member is not marked as down for it.
+Like any failed request it can be charged to the owner, when the local
+resolution succeeds fast.
+Known limitation: a lost packet of the request, or of its answer, costs that
+query the full deadline before the local resolution starts.
+The cluster is intended for local networks that lose (nearly) no packets.
+Unbound ignores ICMP port unreachable for UDP, so a member that has no
+server listening is detected by the deadline of the cache probe, not at once.
+When identical queries from several members arrive at the owner in different
+threads, every thread resolves the query once, this is the per-thread
+behaviour of Unbound and not duplication between members.
+
+The members are trusted like a forward-zone for unsigned data: an answer of a
+member is used as an answer to the query.
+DNSSEC is not relied on from the member, the validator of this instance
+validates the answer again, when validation is enabled.
+When the owner answers with data that was past its TTL (see
+:ref:`serve-expired<unbound.conf.serve-expired>`), the answer is used for the
+client but it is not stored in the local cache.
+Queries for names under ``cluster-exclude``, queries with EDNS client subnet,
+queries without the recursion desired flag and queries of a class other than
+IN are not sent to the owner.
+
+An owner counts a cache probe that misses as an answer of REFUSED in its
+rcode statistics (``num.answer.rcode.REFUSED``).
+The cluster counters are printed with the statistics, see
+:ref:`cluster.routed<unbound-control.stats.cluster.routed>` and following;
+in multi-process operation
+(compiled without thread support, with several ``num-threads``) every process
+has its own counters and the one that answers the command prints them.
+
+
+@@UAHL@unbound.conf.cluster@cluster-peer@@: *<ip address[@port]>*
+    The address of a member of the cluster.
+    Can be given multiple times, once for every member.
+    The list should include this instance itself, and be identical on all
+    members.
+    The port defaults to the :ref:`port<unbound.conf.port>` of the server.
+    The nodes derive the ownership of names from the peer addresses, so they
+    should list the same addresses and ports.
+
+    Default: (none)
+
+
+@@UAHL@unbound.conf.cluster@cluster-self@@: *<ip address[@port]>*
+    The address of this instance, as it appears in the
+    :ref:`cluster-peer<unbound.conf.cluster.cluster-peer>` list.
+    If not set, the peer that matches the addresses in the
+    :ref:`interface<unbound.conf.interface>` options is used.
+    The port defaults to the :ref:`port<unbound.conf.port>` of the server.
+    When no peer or more than one peer matches, a warning is printed and the
+    position of this instance in the cluster is not known.
+
+    Default: (autodetect)
+
+
+@@UAHL@unbound.conf.cluster@cluster-local-ttl-max@@: *<seconds>*
+    Cap on the TTL of the answers that this instance receives from the
+    cluster member that owns the name, before they are stored in the local
+    cache, so that copies at the other members expire sooner.
+    Answers that this instance resolves itself, also for names owned by
+    another member after a fallback, are not capped.
+    The value 0 means no cap, negative values are not allowed.
+
+    Default: 0
+
+
+@@UAHL@unbound.conf.cluster@cluster-timeout@@: *<msec>*
+    How long, in milliseconds, a query waits for the cluster member that owns
+    the name, before it falls back to resolving the query locally.
+    This is the deadline of the first step, a cache probe that the owner
+    answers from its cache, or with a miss.
+    After a miss the owner is asked to resolve the name, with a deadline
+    from the discard budget of the client query, see the text above; when
+    that passes the query is resolved locally,
+    and the owner is not marked as down for it.
+    The wait for the probe is governed by this deadline and not by the
+    shorter timeout of the outgoing UDP query to the owner, that is learned
+    from earlier replies: when the outgoing query times out before the
+    deadline, the probe is sent again, a few times, until the deadline
+    passes.
+    The request to resolve is a UDP query that is not sent again, see the
+    text above.
+    Negative values are not allowed.
+    The value 0 turns the deadline of the probe off, the query then waits
+    for the normal outgoing query timeouts.
+
+    Default: 100
+
+
+@@UAHL@unbound.conf.cluster@cluster-exclude@@: *<domain name>*
+    A zone that is always resolved locally, and never sent to another cluster
+    member.
+    The name and everything below it is excluded.
+    Can be given multiple times; use it for zones that differ per member,
+    like internal zones that are not public.
+
+    Default: (none)
 
 
 .. _unbound.conf.dnstap:

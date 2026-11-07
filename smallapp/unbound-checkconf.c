@@ -79,6 +79,9 @@
 #ifdef WITH_PYTHONMODULE
 #include "pythonmod/pythonmod.h"
 #endif
+#ifdef USE_CLUSTER
+#include "cluster/cluster.h"
+#endif
 #ifdef CLIENT_SUBNET
 #include "edns-subnet/subnet-whitelist.h"
 #endif
@@ -1105,10 +1108,34 @@ morechecks(struct config_file* cfg)
 		&& strcmp(cfg->module_conf, "ipset iterator") != 0
 		&& strcmp(cfg->module_conf, "ipset respip iterator") != 0
 #endif
+#ifdef USE_CLUSTER
+		&& strcmp(cfg->module_conf, "cluster iterator") != 0
+		&& strcmp(cfg->module_conf, "respip cluster iterator") != 0
+		&& strcmp(cfg->module_conf, "validator cluster iterator") != 0
+		&& strcmp(cfg->module_conf, "respip validator cluster iterator") != 0
+		&& strcmp(cfg->module_conf, "dns64 cluster iterator") != 0
+		&& strcmp(cfg->module_conf, "dns64 validator cluster iterator") != 0
+		&& strcmp(cfg->module_conf, "respip dns64 validator cluster iterator") != 0
+#endif
+#if defined(USE_CLUSTER) && defined(USE_CACHEDB)
+		/* cachedb before cluster: the persistent cache is asked
+		 * first, the cluster owner is asked on a miss */
+		&& strcmp(cfg->module_conf, "cachedb cluster iterator") != 0
+		&& strcmp(cfg->module_conf, "respip cachedb cluster iterator") != 0
+		&& strcmp(cfg->module_conf, "validator cachedb cluster iterator") != 0
+		&& strcmp(cfg->module_conf, "respip validator cachedb cluster iterator") != 0
+		&& strcmp(cfg->module_conf, "dns64 validator cachedb cluster iterator") != 0
+		&& strcmp(cfg->module_conf, "respip dns64 validator cachedb cluster iterator") != 0
+#endif
 		) {
 		fatal_exit("module conf '%s' is not known to work",
 			cfg->module_conf);
 	}
+#ifdef USE_CLUSTER
+	if(cfg->cluster_peer && !strstr(cfg->module_conf, "cluster"))
+		log_warn("cluster-peer is set but the cluster module is not "
+			"in module-config, cluster is not active");
+#endif
 
 #ifdef HAVE_GETPWNAM
 	if(cfg->username && cfg->username[0]) {
@@ -1212,6 +1239,10 @@ checkconf(const char* cfgfile, const char* opt, int final, int quiet,
 #ifdef WITH_PYTHONMODULE
 	if(strstr(cfg->module_conf, "python"))
 		check_mod(cfg, pythonmod_get_funcblock());
+#endif
+#ifdef USE_CLUSTER
+	if(strstr(cfg->module_conf, "cluster"))
+		check_mod(cfg, cluster_get_funcblock());
 #endif
 	check_fwd(cfg);
 	check_hints(cfg);

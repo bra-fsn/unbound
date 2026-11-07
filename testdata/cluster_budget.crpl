@@ -1,0 +1,324 @@
+; config options
+server:
+	target-fetch-policy: "0 0 0 0 0"
+	qname-minimisation: no
+	module-config: "validator cluster iterator"
+
+cluster:
+	cluster-peer: 10.0.0.1
+	cluster-peer: 10.0.0.2
+	cluster-peer: 10.0.0.3
+	cluster-self: 10.0.0.1
+	cluster-timeout: 100
+
+stub-zone:
+	name: "example.com"
+	stub-addr: 192.0.2.1
+CONFIG_END
+
+SCENARIO_BEGIN Cluster: the resolve request deadline follows the discard budget of the client query.
+; discard-timeout is the default 1900 msec.  The names are owned by
+; 10.0.0.3, that misses the probe and then recurses slowly.  The step 2
+; deadline is the time left of the discard budget (1900 msec after the
+; arrival of the client query), not a fixed value: answers of the owner at
+; 1.7 s, and at 1.88 s of a query that arrived 10 msec before the probe
+; answer, are used.  (The 3 s cap without discard-timeout is in
+; cluster_resolve_timeout, the floor of 300 msec in the unit test.)
+RANGE_BEGIN 0 100000
+	ADDRESS 192.0.2.1
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA NOERROR
+SECTION QUESTION
+q1.example.com. IN A
+SECTION ANSWER
+q1.example.com. 3600 IN A 10.8.8.1
+ENTRY_END
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA NOERROR
+SECTION QUESTION
+q2.example.com. IN A
+SECTION ANSWER
+q2.example.com. 3600 IN A 10.8.8.2
+ENTRY_END
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA NOERROR
+SECTION QUESTION
+q3.example.com. IN A
+SECTION ANSWER
+q3.example.com. 3600 IN A 10.8.8.3
+ENTRY_END
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA NOERROR
+SECTION QUESTION
+q4.example.com. IN A
+SECTION ANSWER
+q4.example.com. 3600 IN A 10.8.8.4
+ENTRY_END
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA NOERROR
+SECTION QUESTION
+q5.example.com. IN A
+SECTION ANSWER
+q5.example.com. 3600 IN A 10.8.8.5
+ENTRY_END
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA NOERROR
+SECTION QUESTION
+q6.example.com. IN A
+SECTION ANSWER
+q6.example.com. 3600 IN A 10.8.8.6
+ENTRY_END
+RANGE_END
+
+STEP 10 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+q1.example.com. IN A
+ENTRY_END
+
+STEP 20 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+q1.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 03
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 30 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA REFUSED
+SECTION QUESTION
+q1.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 09
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 40 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+q1.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 50 TIME_PASSES ELAPSE 1.7
+
+STEP 60 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+q1.example.com. IN A
+SECTION ANSWER
+q1.example.com. 3600 IN A 10.9.9.1
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 70 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+q1.example.com. IN A
+SECTION ANSWER
+q1.example.com. 3600 IN A 10.9.9.1
+ENTRY_END
+
+STEP 80 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+q2.example.com. IN A
+ENTRY_END
+
+STEP 90 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+q2.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 03
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 100 TIME_PASSES ELAPSE 0.01
+
+STEP 110 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA REFUSED
+SECTION QUESTION
+q2.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 09
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 120 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+q2.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 130 TIME_PASSES ELAPSE 1.87
+
+STEP 140 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+q2.example.com. IN A
+SECTION ANSWER
+q2.example.com. 3600 IN A 10.9.9.2
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 150 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+q2.example.com. IN A
+SECTION ANSWER
+q2.example.com. 3600 IN A 10.9.9.2
+ENTRY_END
+
+; the budget is used up: 1.9 s after the arrival of the client query the
+; step 2 deadline passes and the query is resolved locally (the reply to
+; that client is past discard-timeout and dropped); a client that asks
+; again gets the local answer from the cache.  With the 3 s cap instead of
+; the budget the owner would still be waited for.
+STEP 160 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+q3.example.com. IN A
+ENTRY_END
+
+STEP 170 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+q3.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 03
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 180 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA REFUSED
+SECTION QUESTION
+q3.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 09
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 190 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+q3.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 200 TIME_PASSES ELAPSE 1.95
+
+STEP 210 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+q3.example.com. IN A
+ENTRY_END
+
+STEP 220 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+q3.example.com. IN A
+SECTION ANSWER
+q3.example.com. 3600 IN A 10.8.8.3
+ENTRY_END
+
+SCENARIO_END

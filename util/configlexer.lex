@@ -591,6 +591,12 @@ redis-replica-connect-timeout{COLON}	{ YDVAR(1, VAR_CACHEDB_REDISREPLICACONNECTT
 redis-expire-records{COLON}	{ YDVAR(1, VAR_CACHEDB_REDISEXPIRERECORDS) }
 redis-logical-db{COLON}			{ YDVAR(1, VAR_CACHEDB_REDISLOGICALDB) }
 redis-replica-logical-db{COLON}		{ YDVAR(1, VAR_CACHEDB_REDISREPLICALOGICALDB) }
+cluster{COLON}			{ YDVAR(0, VAR_CLUSTER) }
+cluster-peer{COLON}		{ YDVAR(1, VAR_CLUSTER_PEER) }
+cluster-self{COLON}		{ YDVAR(1, VAR_CLUSTER_SELF) }
+cluster-local-ttl-max{COLON}	{ YDVAR(1, VAR_CLUSTER_LOCAL_TTL_MAX) }
+cluster-exclude{COLON}		{ YDVAR(1, VAR_CLUSTER_EXCLUDE) }
+cluster-timeout{COLON}		{ YDVAR(1, VAR_CLUSTER_TIMEOUT) }
 ipset{COLON}			{ YDVAR(0, VAR_IPSET) }
 name-v4{COLON}			{ YDVAR(1, VAR_IPSET_NAME_V4) }
 name-v6{COLON}			{ YDVAR(1, VAR_IPSET_NAME_V6) }

@@ -419,6 +419,13 @@ config_create(void)
 	cfg->redis_replica_logical_db = 0;
 #endif  /* USE_REDIS */
 #endif  /* USE_CACHEDB */
+#ifdef USE_CLUSTER
+	cfg->cluster_peer = NULL;
+	cfg->cluster_self = NULL;
+	cfg->cluster_local_ttl_max = 0;
+	cfg->cluster_exclude = NULL;
+	cfg->cluster_timeout = 100;
+#endif
 #ifdef USE_IPSET
 	cfg->ipset_name_v4 = NULL;
 	cfg->ipset_name_v6 = NULL;
@@ -926,6 +933,18 @@ int config_set_option(struct config_file* cfg, const char* opt,
 	else S_YNO("cachedb-no-store:", cachedb_no_store)
 	else S_YNO("cachedb-check-when-serve-expired:", cachedb_check_when_serve_expired)
 #endif /* USE_CACHEDB */
+#ifdef USE_CLUSTER
+	else if(strcmp(opt, "cluster-local-ttl-max:") == 0 ||
+		strcmp(opt, "cluster-timeout:") == 0) {
+		/* numbers, and not negative */
+		IS_NUMBER_OR_ZERO;
+		if(atoi(val) < 0)
+			return 0;
+		if(strcmp(opt, "cluster-local-ttl-max:") == 0)
+			cfg->cluster_local_ttl_max = atoi(val);
+		else	cfg->cluster_timeout = atoi(val);
+	}
+#endif /* USE_CLUSTER */
 	else if(strcmp(opt, "define-tag:") ==0) {
 		return config_add_tag(cfg, val);
 	/* val_sig_skew_min, max and val_max_restart are copied into val_env
@@ -960,7 +979,7 @@ int config_set_option(struct config_file* cfg, const char* opt,
 		 * max-client-subnet-ipv4, max-client-subnet-ipv6,
 		 * min-client-subnet-ipv4, min-client-subnet-ipv6,
 		 * max-ecs-tree-size-ipv4, max-ecs-tree-size-ipv6, ipsecmod_hook,
-		 * ipsecmod_whitelist. */
+		 * ipsecmod_whitelist, cluster-peer, cluster-exclude. */
 		return 0;
 	}
 	return 1;
@@ -1464,6 +1483,13 @@ config_get_option(struct config_file* cfg, const char* opt,
 	else O_DEC(opt, "redis-replica-logical-db", redis_replica_logical_db)
 #endif  /* USE_REDIS */
 #endif  /* USE_CACHEDB */
+#ifdef USE_CLUSTER
+	else O_LST(opt, "cluster-peer", cluster_peer)
+	else O_STR(opt, "cluster-self", cluster_self)
+	else O_DEC(opt, "cluster-local-ttl-max", cluster_local_ttl_max)
+	else O_LST(opt, "cluster-exclude", cluster_exclude)
+	else O_DEC(opt, "cluster-timeout", cluster_timeout)
+#endif  /* USE_CLUSTER */
 #ifdef USE_IPSET
 	else O_STR(opt, "name-v4", ipset_name_v4)
 	else O_STR(opt, "name-v6", ipset_name_v6)
@@ -1890,6 +1916,11 @@ config_delete(struct config_file* cfg)
 	free(cfg->redis_replica_server_password);
 #endif  /* USE_REDIS */
 #endif  /* USE_CACHEDB */
+#ifdef USE_CLUSTER
+	config_delstrlist(cfg->cluster_peer);
+	free(cfg->cluster_self);
+	config_delstrlist(cfg->cluster_exclude);
+#endif  /* USE_CLUSTER */
 #ifdef USE_IPSET
 	free(cfg->ipset_name_v4);
 	free(cfg->ipset_name_v6);
