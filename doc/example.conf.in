@@ -1426,7 +1426,9 @@ remote-control:
 #     cluster-peer: 10.0.0.11
 #     cluster-peer: 10.0.0.12
 #     # port defaults to the server port.
-#     # address of this instance, if not detected from the interface: list.
+#     # address of this instance, if not detected from the interface: list
+#     # or from the peer address on a local network interface (so with
+#     # interface: <ifname> the config can be identical on all members).
 #     cluster-self: 10.0.0.11
 #     # cap on the TTL of answers not owned by this instance, 0 is no cap.
 #     cluster-local-ttl-max: 0

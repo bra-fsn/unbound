@@ -434,6 +434,22 @@ int cluster_inplace_reply(struct query_info* qinfo,
 	struct comm_reply* repinfo, struct regional* region,
 	struct timeval* start_time, int id, void* callback);
 
+/**
+ * Find the peers that have a local address, ignoring the ports of the
+ * addresses, but a peer must have the given port.  Exported for unit tests.
+ * @param peers: peer array.
+ * @param num_peers: number of peers.
+ * @param locals: local addresses (ports and scope ids are ignored).
+ * @param lens: their lengths.
+ * @param num_locals: number of local addresses.
+ * @param port: the port a peer must have to match.
+ * @param found: set to the index of the last matching peer.
+ * @return the number of peers that match.
+ */
+size_t cluster_match_local_addrs(struct cluster_peer* peers,
+	size_t num_peers, struct sockaddr_storage* locals, socklen_t* lens,
+	size_t num_locals, int port, int* found);
+
 /* ---- health arithmetic, fixed point, exported for the unit tests ---- */
 
 /**
