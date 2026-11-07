@@ -1,0 +1,28 @@
+# syntax=docker/dockerfile:1
+# Unbound built from source with --enable-cluster.
+# The source tree is passed as the named build context "src":
+#   docker build --build-context src=/path/to/unbound -f Dockerfile.unbound .
+FROM debian:bookworm AS build
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    build-essential bison flex autoconf automake libtool libssl-dev libexpat1-dev libevent-dev \
+    pkg-config ca-certificates make && rm -rf /var/lib/apt/lists/*
+# copy the tree without .git (and without stale build products)
+RUN --mount=type=bind,from=src,target=/srcro mkdir /src && \
+    tar -C /srcro --exclude=.git -cf - . | tar -C /src -xf -
+WORKDIR /src
+ARG EXTRA_CONFIGURE=""
+RUN (make distclean >/dev/null 2>&1 || true) && \
+    ./configure --prefix=/usr/local --sysconfdir=/etc --with-libevent \
+        --enable-cluster --with-pidfile=/run/unbound.pid \
+        --with-username="" --with-chroot-dir="" ${EXTRA_CONFIGURE} >/tmp/configure.log 2>&1 \
+    || (tail -50 /tmp/configure.log; exit 1)
+RUN make -j"$(nproc)" >/tmp/make.log 2>&1 || (tail -60 /tmp/make.log; exit 1)
+RUN make install DESTDIR=/out >/tmp/install.log 2>&1 || (tail -30 /tmp/install.log; exit 1)
+
+FROM debian:bookworm-slim
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    libssl3 libevent-2.1-7 libexpat1 iproute2 procps ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=build /out/usr/local/ /usr/local/
+COPY entry.sh /entry.sh
+RUN chmod +x /entry.sh
+ENTRYPOINT ["/entry.sh"]

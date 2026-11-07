@@ -1,0 +1,7 @@
+# fake authority + load generator image
+FROM python:3.12-slim
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    dnsperf iproute2 && rm -rf /var/lib/apt/lists/* ; \
+    pip install --no-cache-dir dnspython==2.6.1
+WORKDIR /harness
+CMD ["sleep", "infinity"]

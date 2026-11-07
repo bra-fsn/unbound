@@ -1,0 +1,4 @@
+results/
+run*/
+*.csv
+*.md
