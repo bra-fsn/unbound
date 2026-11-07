@@ -317,6 +317,51 @@ peer_addr_test(void)
 	unit_assert(!cluster_addr_is_peer(&ce, &a, alen));
 }
 
+/** local address matching for the detection of the own position */
+static void
+local_match_test(void)
+{
+	struct cluster_peer peers[3];
+	struct sockaddr_storage loc[3];
+	socklen_t ll[3];
+	int found = -1;
+	memset(peers, 0, sizeof(peers));
+	unit_assert(extstrtoaddr("10.0.0.1@53", &peers[0].addr,
+		&peers[0].addrlen, 53));
+	unit_assert(extstrtoaddr("10.0.0.2@53", &peers[1].addr,
+		&peers[1].addrlen, 53));
+	unit_assert(extstrtoaddr("2001:db8::3@53", &peers[2].addr,
+		&peers[2].addrlen, 53));
+	/* exactly one; the port of the local address is ignored */
+	unit_assert(extstrtoaddr("10.0.0.2@9999", &loc[0], &ll[0], 53));
+	unit_assert(extstrtoaddr("192.0.2.1", &loc[1], &ll[1], 53));
+	unit_assert(cluster_match_local_addrs(peers, 3, loc, ll, 2, 53,
+		&found) == 1 && found == 1);
+	/* none */
+	unit_assert(cluster_match_local_addrs(peers, 3, loc+1, ll+1, 1, 53,
+		&found) == 0);
+	unit_assert(cluster_match_local_addrs(peers, 3, loc, ll, 0, 53,
+		&found) == 0);
+	/* multiple */
+	unit_assert(extstrtoaddr("10.0.0.1", &loc[1], &ll[1], 53));
+	unit_assert(cluster_match_local_addrs(peers, 3, loc, ll, 2, 53,
+		&found) == 2);
+	/* a peer is counted once, also with two local matches */
+	unit_assert(extstrtoaddr("10.0.0.1", &loc[2], &ll[2], 53));
+	unit_assert(cluster_match_local_addrs(peers, 3, loc+1, ll+1, 2, 53,
+		&found) == 1 && found == 0);
+	/* port mismatch */
+	unit_assert(cluster_match_local_addrs(peers, 3, loc, ll, 2, 5353,
+		&found) == 0);
+	/* v6, and v4 does not match v6 */
+	unit_assert(extstrtoaddr("2001:db8::3", &loc[0], &ll[0], 53));
+	unit_assert(cluster_match_local_addrs(peers, 3, loc, ll, 1, 53,
+		&found) == 1 && found == 2);
+	unit_assert(extstrtoaddr("2001:db8::4", &loc[0], &ll[0], 53));
+	unit_assert(cluster_match_local_addrs(peers, 3, loc, ll, 1, 53,
+		&found) == 0);
+}
+
 /** the ranking for the cluster_lookup command, and the stats snapshots */
 static void
 rank_test(void)
@@ -711,6 +756,7 @@ cluster_test(void)
 	option_test();
 	unique_test();
 	peer_addr_test();
+	local_match_test();
 	rank_test();
 	ewma_test();
 	rtt_test();

@@ -5116,11 +5116,24 @@ has its own counters and the one that answers the command prints them.
 @@UAHL@unbound.conf.cluster@cluster-self@@: *<ip address[@port]>*
     The address of this instance, as it appears in the
     :ref:`cluster-peer<unbound.conf.cluster.cluster-peer>` list.
-    If not set, the peer that matches the addresses in the
-    :ref:`interface<unbound.conf.interface>` options is used.
+    If not set, the position is detected: first the peer that matches the
+    addresses in the :ref:`interface<unbound.conf.interface>` options is
+    used.
+    If no peer matches those, the peer whose address is assigned to a local
+    network interface that is up and whose port is the
+    :ref:`port<unbound.conf.port>` of the server is used (this needs
+    ``getifaddrs``, it is skipped on systems without it, such as Windows;
+    the scope of link-local IPv6 addresses is ignored).
+    An ``interface: <name>`` entry, for an interface name, resolves to the
+    addresses of that interface, so it is covered by this last step.
+    With ``interface: <ifname>``, ``cluster-peer`` for every member, and no
+    ``cluster-self``, the configuration can be identical on all members,
+    which is useful for netbooted hosts.
     The port defaults to the :ref:`port<unbound.conf.port>` of the server.
     When no peer or more than one peer matches, a warning is printed and the
-    position of this instance in the cluster is not known.
+    position of this instance in the cluster is not known, set
+    ``cluster-self`` then.
+    The method that found the position is logged at verbosity 1.
 
     Default: (autodetect)
 

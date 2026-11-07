@@ -58,6 +58,12 @@
 #include "util/net_help.h"
 #include "util/log.h"
 #include "util/alloc.h"
+#ifdef HAVE_IFADDRS_H
+#include <ifaddrs.h>
+#endif
+#ifdef HAVE_NET_IF_H
+#include <net/if.h>
+#endif
 #include "util/regional.h"
 #include "util/siphash.h"
 #include "util/storage/slabhash.h"
@@ -183,11 +189,91 @@ cluster_peer_is_interface(struct config_file* cfg, struct cluster_peer* peer)
 	return 0;
 }
 
+size_t
+cluster_match_local_addrs(struct cluster_peer* peers, size_t num_peers,
+	struct sockaddr_storage* locals, socklen_t* lens, size_t num_locals,
+	int port, int* found)
+{
+	size_t i, j, count = 0;
+	for(i=0; i<num_peers; i++) {
+		struct sockaddr_in* pin = (struct sockaddr_in*)&peers[i].addr;
+		/* the port is at the same place in sockaddr_in and in6 */
+		if((int)ntohs(pin->sin_port) != port)
+			continue;
+		for(j=0; j<num_locals; j++) {
+			if(sockaddr_cmp_addr(&locals[j], lens[j],
+				&peers[i].addr, peers[i].addrlen) == 0) {
+				*found = (int)i;
+				count++;
+				break; /* count a peer once */
+			}
+		}
+	}
+	return count;
+}
+
+#ifdef HAVE_GETIFADDRS
+/**
+ * Find the peers that have an address that is assigned to a local
+ * interface that is up.  Scope ids are ignored.
+ * @param ce: cluster env with the peers.
+ * @param port: the server port, peers must have it.
+ * @param found: set to the index of the last match.
+ * @return number of matching peers.
+ */
+static size_t
+cluster_peers_on_local_ifs(struct cluster_env* ce, int port, int* found)
+{
+	struct ifaddrs *addrs = NULL, *ifa;
+	struct sockaddr_storage* locals;
+	socklen_t* lens;
+	size_t n = 0, num = 0;
+	if(getifaddrs(&addrs) == -1) {
+		log_warn("cluster: getifaddrs: %s", strerror(errno));
+		return 0;
+	}
+	for(ifa = addrs; ifa; ifa = ifa->ifa_next)
+		n++;
+	locals = (struct sockaddr_storage*)calloc(n+1, sizeof(*locals));
+	lens = (socklen_t*)calloc(n+1, sizeof(*lens));
+	if(!locals || !lens) {
+		free(locals);
+		free(lens);
+		freeifaddrs(addrs);
+		return 0;
+	}
+	for(ifa = addrs; ifa; ifa = ifa->ifa_next) {
+		if(!ifa->ifa_addr || !(ifa->ifa_flags & IFF_UP))
+			continue;
+		if(ifa->ifa_addr->sa_family == AF_INET) {
+			memcpy(&locals[num], ifa->ifa_addr,
+				sizeof(struct sockaddr_in));
+			lens[num++] = (socklen_t)sizeof(struct sockaddr_in);
+		}
+#ifdef INET6
+		else if(ifa->ifa_addr->sa_family == AF_INET6) {
+			memcpy(&locals[num], ifa->ifa_addr,
+				sizeof(struct sockaddr_in6));
+			lens[num++] = (socklen_t)sizeof(struct sockaddr_in6);
+		}
+#endif
+	}
+	n = cluster_match_local_addrs(ce->peers, ce->num_peers, locals, lens,
+		num, port, found);
+	free(locals);
+	free(lens);
+	freeifaddrs(addrs);
+	return n;
+}
+#endif /* HAVE_GETIFADDRS */
+
 /**
  * Determine which of the peers is this server.
  * With cluster-self, the peer with that address.  Otherwise the peer
- * addresses that are listed in interface: config.  If there is not exactly
- * one match the position is not known.
+ * addresses that are listed in interface: config.  If none of those match,
+ * the peer with the port of the server and an address that is assigned to
+ * a local interface that is up (interface: names resolve to such addresses).
+ * If there is not exactly one match the position is not known.
  * @param ce: cluster env, with the peers set, self is set.
  * @param cfg: the config.
  */
@@ -223,6 +309,8 @@ cluster_find_self(struct cluster_env* ce, struct config_file* cfg)
 			return;
 		}
 		ce->self = found;
+		verbose(VERB_OPS, "cluster: own position %d (%s) determined "
+			"from cluster-self", found, ce->peers[found].str);
 		return;
 	}
 	for(i=0; i<ce->num_peers; i++) {
@@ -231,6 +319,29 @@ cluster_find_self(struct cluster_env* ce, struct config_file* cfg)
 			count++;
 		}
 	}
+#ifdef HAVE_GETIFADDRS
+	if(count == 0) {
+		count = cluster_peers_on_local_ifs(ce, cfg->port, &found);
+		if(count == 1) {
+			ce->self = found;
+			verbose(VERB_OPS, "cluster: own position %d (%s) "
+				"determined from the local interface "
+				"addresses", found, ce->peers[found].str);
+			return;
+		}
+		if(count != 0)
+			log_warn("cluster: %u cluster-peer addresses are "
+				"local interface addresses, expected one; "
+				"own position unknown, set cluster-self",
+				(unsigned)count);
+		else
+			log_warn("cluster: no cluster-peer address matches "
+				"interface entries or local interface "
+				"addresses; own position unknown, set "
+				"cluster-self");
+		return;
+	}
+#endif
 	if(count != 1) {
 		log_warn("cluster: %u cluster-peer addresses match interface "
 			"entries, expected one; own position unknown, set "
@@ -238,6 +349,8 @@ cluster_find_self(struct cluster_env* ce, struct config_file* cfg)
 		return;
 	}
 	ce->self = found;
+	verbose(VERB_OPS, "cluster: own position %d (%s) determined from "
+		"the interface: addresses", found, ce->peers[found].str);
 }
 
 /**
