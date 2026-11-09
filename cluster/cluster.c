@@ -1158,6 +1158,7 @@ cluster_stats_add(struct cluster_stats* a, struct cluster_stats* b)
 	a->self += b->self;
 	a->excluded += b->excluded;
 	a->charged += b->charged;
+	a->owner_cached_servfail += b->owner_cached_servfail;
 	a->resolve_ejected += b->resolve_ejected;
 	a->nolive += b->nolive;
 	a->served += b->served;
@@ -1392,6 +1393,7 @@ cluster_print_stats(struct module_env* env, cluster_print_cb cb, void* arg)
 	CLUSTER_STAT("resolve_timeout", t.resolve_timeout)
 	CLUSTER_STAT("fallback", t.fallback)
 	CLUSTER_STAT("charged", t.charged)
+	CLUSTER_STAT("owner_cached_servfail", t.owner_cached_servfail)
 	CLUSTER_STAT("resolve_ejected", t.resolve_ejected)
 	CLUSTER_STAT("self", t.self)
 	CLUSTER_STAT("excluded", t.excluded)
@@ -1595,10 +1597,13 @@ cluster_init(struct module_env* env, int id)
 	if(!inplace_cb_register((void*)cluster_inplace_reply,
 		inplace_cb_reply, ce, env, id) ||
 		!inplace_cb_register((void*)cluster_inplace_reply,
-		inplace_cb_reply_cache, ce, env, id)) {
+		inplace_cb_reply_cache, ce, env, id) ||
+		!inplace_cb_register((void*)cluster_inplace_reply,
+		inplace_cb_reply_servfail, ce, env, id)) {
 		log_err("cluster: could not register the reply callbacks");
 		inplace_cb_delete(env, inplace_cb_reply, id);
 		inplace_cb_delete(env, inplace_cb_reply_cache, id);
+		inplace_cb_delete(env, inplace_cb_reply_servfail, id);
 		cluster_env_delete(ce);
 		env->modinfo[id] = NULL;
 		return 0;
@@ -1630,6 +1635,7 @@ cluster_deinit(struct module_env* env, int id)
 	ce = (struct cluster_env*)env->modinfo[id];
 	inplace_cb_delete(env, inplace_cb_reply, id);
 	inplace_cb_delete(env, inplace_cb_reply_cache, id);
+	inplace_cb_delete(env, inplace_cb_reply_servfail, id);
 	cluster_env_delete(ce);
 	env->modinfo[id] = NULL;
 }
@@ -1670,6 +1676,10 @@ struct cluster_qstate {
 	/** paired attribution: the owner failed step 2 and the local
 	 * fallback is running; the verdict is made at moddone */
 	int fb_pending;
+	/** the failure of step 2 is a SERVFAIL that the owner answered from
+	 * its cache (an error response of the iterator), the owner is not
+	 * ill, no charge; valid if fb_pending */
+	int fb_cached;
 	/** time the local fallback started, if fb_pending */
 	struct timeval fb_start;
 	/** the index of the peer that is queried */
@@ -2189,11 +2199,16 @@ cluster_process_reply(struct module_qstate* qstate, struct cluster_env* ce,
 	if(rcode != LDNS_RCODE_NOERROR && rcode != LDNS_RCODE_NXDOMAIN) {
 		verbose(VERB_ALGO, "cluster: reply from the owner has rcode %d",
 			rcode);
+		/* the owner answered the error from its cache */
+		if(rcode == LDNS_RCODE_SERVFAIL && has_opt &&
+			(cflags & CLUSTER_FLAG_OWNER_CACHE_HIT))
+			*cachehit = 1;
 		return CLUSTER_REPLY_REJECT;
 	}
 	if(has_opt && (cflags & CLUSTER_FLAG_MISS))
 		return CLUSTER_REPLY_REJECT; /* a miss is not an answer */
-	/* remove the CD bit we asked for, validation is done here */
+	/* remove the CD bit, if we asked for it (only when the client
+	 * set CD), validation is done here */
 	prs->flags &= ~BIT_CD;
 	/* The scrubber of the iterator is used like for a forwarder with
 	 * zone ".", with the RD bit set.  It cleans the message to the
@@ -2279,7 +2294,8 @@ cluster_fallback_done(struct module_qstate* qstate, struct cluster_env* ce,
 		int rc = (int)FLAGS_GET_RCODE(qstate->return_msg->rep->flags);
 		ok = (rc == LDNS_RCODE_NOERROR || rc == LDNS_RCODE_NXDOMAIN);
 	}
-	if(ok && elapsed_us <= CLUSTER_FAST_FALLBACK*1000) {
+	if(ok && !cq->fb_cached &&
+		elapsed_us <= CLUSTER_FAST_FALLBACK*1000) {
 		cluster_mystats(ce, qstate->env)->charged++;
 		cluster_res_result(ce, peer, RES_CHARGED, cq->trial,
 			cq->trial_gen, qstate->env);
@@ -2454,6 +2470,13 @@ cluster_handle_reply(struct module_qstate* qstate, struct cluster_env* ce,
 		 * charged to the owner is decided when the local fallback
 		 * is done, see cluster_fallback_done. */
 		cq->fb_pending = 1;
+		/* a SERVFAIL from the cache of the owner is what a standalone
+		 * resolver would answer too, a local resolution that works
+		 * is no sign of an ill owner */
+		cq->fb_cached = (event == module_event_reply &&
+			res == CLUSTER_REPLY_REJECT && cachehit);
+		if(cq->fb_cached)
+			st->owner_cached_servfail++;
 		cq->fb_start = *qstate->env->now_tv;
 	}
 	cluster_fallback(qstate, ce, id);
@@ -2663,8 +2686,17 @@ cluster_inplace_reply(struct query_info* ATTR_UNUSED(qinfo),
 		return 1;
 	if(!qstate) {
 		/* from the msg cache of the worker.  start_time is the
-		 * current time here, and the ttl of the entry is absolute. */
-		flags |= CLUSTER_FLAG_OWNER_CACHE_HIT;
+		 * current time here, and the ttl of the entry is absolute.
+		 * The servfail callback is also called without a message,
+		 * for the errors of the worker, those are no cache hit.
+		 * The worker also answers a cached bogus message with the
+		 * servfail callback, with a message that does not have the
+		 * SERVFAIL rcode; that is not an error response of the
+		 * iterator, it is not flagged, like the same answer from the
+		 * mesh state (the owner is not excused for it). */
+		if(rep && (rcode != LDNS_RCODE_SERVFAIL ||
+			FLAGS_GET_RCODE(rep->flags) == LDNS_RCODE_SERVFAIL))
+			flags |= CLUSTER_FLAG_OWNER_CACHE_HIT;
 		if(rep && start_time && TTL_IS_EXPIRED(rep->ttl,
 			start_time->tv_sec))
 			flags |= CLUSTER_FLAG_STALE;
@@ -2674,6 +2706,17 @@ cluster_inplace_reply(struct query_info* ATTR_UNUSED(qinfo),
 		 * the cache with the expired data, for the waiting client. */
 		if(!qstate->return_msg || qstate->return_msg->rep != rep)
 			flags |= CLUSTER_FLAG_STALE;
+		/* A message with the SERVFAIL rcode can only come from the
+		 * message cache, the error response that the iterator stores
+		 * for NORR_TTL; a fresh failure has no message and is
+		 * answered with the rcode only.  The iterator answers a
+		 * query from the mesh with such an entry from the cache,
+		 * for the query name, or for the target of a CNAME that is
+		 * cached (the worker cannot answer that from the cache).
+		 * A fresh bogus answer has NOERROR or NXDOMAIN in rep->flags,
+		 * mesh_send_reply forces the SERVFAIL, it is not flagged. */
+		if(FLAGS_GET_RCODE(rep->flags) == LDNS_RCODE_SERVFAIL)
+			flags |= CLUSTER_FLAG_OWNER_CACHE_HIT;
 	} else if(rcode == LDNS_RCODE_REFUSED &&
 		(qflags & CLUSTER_FLAG_CACHE_ONLY)) {
 		/* the cache only probe, answered by cluster_answer_miss */
