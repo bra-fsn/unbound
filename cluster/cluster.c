@@ -1974,7 +1974,12 @@ cluster_send_step(struct module_qstate* qstate, struct cluster_env* ce,
 		qstate->edns_opts_back_out = saved;
 		goto fail;
 	}
-	e = (*qstate->env->send_query)(&qstate->qinfo, flags, 1, 1, 1, 0,
+	/* The dnssec argument holds the EDNS DO bit and the CD bit, as for
+	 * the iterator.  Without DO the owner strips the signatures from the
+	 * answer and the validator of this resolver can not validate it. */
+	e = (*qstate->env->send_query)(&qstate->qinfo, flags,
+		(qstate->env->cfg->disable_edns_do?0:EDNS_DO) |
+		(flags&BIT_CD), 1, 1, 0,
 		&peer->addr, peer->addrlen,
 		(step == CLUSTER_STEP_PROBE)?cluster_zone:cluster_zone_resolve,
 		(step == CLUSTER_STEP_PROBE)?sizeof(cluster_zone):
@@ -2049,6 +2054,24 @@ cluster_cap_ttl(struct reply_info* rep, time_t cap)
 			if(d->rr_ttl[j] > cap)
 				d->rr_ttl[j] = cap;
 	}
+}
+
+/**
+ * Whether the TTLs of the copy of the answer from the owner are capped.
+ * The key material, DNSKEY and DS answers, and the proofs of no DS are
+ * not capped.  They are validated locally and their lifetime is bounded
+ * by the signatures (RFC 4035 section 5.3.3), but the key cache of the
+ * validator inherits the TTL of the rrset.  With a cap the trust anchor
+ * would be primed, and the DNSKEY and DS chain validated again, every cap
+ * seconds.
+ */
+static int
+cluster_ttl_capped(struct cluster_env* ce, struct module_qstate* qstate)
+{
+	uint16_t t = qstate->qinfo.qtype;
+	if(ce->local_ttl_max <= 0)
+		return 0;
+	return t != LDNS_RR_TYPE_DNSKEY && t != LDNS_RR_TYPE_DS;
 }
 
 /** result of looking at the reply of the owner */
@@ -2219,7 +2242,7 @@ cluster_process_reply(struct module_qstate* qstate, struct cluster_env* ce,
 		limit_nsec_ttl(msg);
 	/* the names of this answer are not owned by this node, it is a
 	 * copy that is allowed to be of limited lifetime */
-	if(ce->local_ttl_max > 0)
+	if(cluster_ttl_capped(ce, qstate))
 		cluster_cap_ttl(msg->rep, (time_t)ce->local_ttl_max);
 	msg->rep->flags |= BIT_RA;
 	msg->rep->flags &= ~(BIT_AA | BIT_AD);

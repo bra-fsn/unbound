@@ -1431,6 +1431,7 @@ remote-control:
 #     # interface: <ifname> the config can be identical on all members).
 #     cluster-self: 10.0.0.11
 #     # cap on the TTL of answers not owned by this instance, 0 is no cap.
+#     # DNSKEY and DS answers are not capped.
 #     cluster-local-ttl-max: 0
 #     # time in msec to wait for the owner before resolving locally.
 #     cluster-timeout: 100

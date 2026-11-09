@@ -5144,6 +5144,11 @@ has its own counters and the one that answers the command prints them.
     cache, so that copies at the other members expire sooner.
     Answers that this instance resolves itself, also for names owned by
     another member after a fallback, are not capped.
+    Answers to DNSKEY and DS queries, including those that prove there is
+    no DS, are not capped.
+    They keep the TTLs of the owner, bounded by cache-max-ttl and, when
+    validated, by the signatures, so that the validator does not prime and
+    validate the keys again every cap seconds.
     The value 0 means no cap, negative values are not allowed.
 
     Default: 0

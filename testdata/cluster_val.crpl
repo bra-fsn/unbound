@@ -29,7 +29,7 @@ SCENARIO_BEGIN Cluster: a signed answer from the owner is validated by the reque
 RANGE_BEGIN 0 100
 	ADDRESS 10.0.0.3
 ENTRY_BEGIN
-MATCH opcode qtype qname
+MATCH opcode qtype qname DO
 ADJUST copy_id
 REPLY QR RD RA NOERROR
 SECTION QUESTION
@@ -40,7 +40,7 @@ example.com.    3600    IN      RRSIG   DNSKEY 3 2 3600 20070926134802 200708291
 ENTRY_END
 
 ENTRY_BEGIN
-MATCH opcode qtype qname
+MATCH opcode qtype qname DO
 ADJUST copy_id
 REPLY QR RD RA NOERROR
 SECTION QUESTION
