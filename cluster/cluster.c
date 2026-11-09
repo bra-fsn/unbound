@@ -1974,7 +1974,12 @@ cluster_send_step(struct module_qstate* qstate, struct cluster_env* ce,
 		qstate->edns_opts_back_out = saved;
 		goto fail;
 	}
-	e = (*qstate->env->send_query)(&qstate->qinfo, flags, 1, 1, 1, 0,
+	/* The dnssec argument holds the EDNS DO bit and the CD bit, as for
+	 * the iterator.  Without DO the owner strips the signatures from the
+	 * answer and the validator of this resolver can not validate it. */
+	e = (*qstate->env->send_query)(&qstate->qinfo, flags,
+		(qstate->env->cfg->disable_edns_do?0:EDNS_DO) |
+		(flags&BIT_CD), 1, 1, 0,
 		&peer->addr, peer->addrlen,
 		(step == CLUSTER_STEP_PROBE)?cluster_zone:cluster_zone_resolve,
 		(step == CLUSTER_STEP_PROBE)?sizeof(cluster_zone):
