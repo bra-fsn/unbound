@@ -16,11 +16,11 @@ stub-zone:
 	stub-addr: 192.0.2.1
 CONFIG_END
 
-SCENARIO_BEGIN Cluster: a referral or empty answer of the owner is rejected, the query is resolved locally, the owner is not marked down.
-; h, n, o, x, t .example.com are owned by 10.0.0.3.  It answers h with a
-; referral, n with an empty answer, o with a NODATA without SOA, and x with
-; an NXDOMAIN without SOA.
-; Four of those would mark the owner down if they were health failures.
+SCENARIO_BEGIN Cluster: a referral of the owner is rejected, the query is resolved locally, the owner is not marked down.
+; h, n, o, t .example.com are owned by 10.0.0.3.  It answers h with a
+; referral, n with a referral with glue, and o with an upward referral to
+; com with glue.
+; Three of those would mark the owner down if they were health failures.
 
 RANGE_BEGIN 0 4000
 	ADDRESS 192.0.2.1
@@ -50,15 +50,6 @@ SECTION QUESTION
 o.example.com. IN A
 SECTION ANSWER
 o.example.com. 3600 IN A 10.8.8.3
-ENTRY_END
-ENTRY_BEGIN
-MATCH opcode qtype qname
-ADJUST copy_id
-REPLY QR AA NOERROR
-SECTION QUESTION
-x.example.com. IN A
-SECTION ANSWER
-x.example.com. 3600 IN A 10.8.8.4
 ENTRY_END
 RANGE_END
 
@@ -139,7 +130,10 @@ ADJUST copy_id
 REPLY QR RD RA NOERROR
 SECTION QUESTION
 n.example.com. IN A
+SECTION AUTHORITY
+example.com. 3600 IN NS ns.example.com.
 SECTION ADDITIONAL
+ns.example.com. 3600 IN A 192.0.2.53
 	HEX_EDNSDATA_BEGIN
 		ff c8           ; CLUSTER option
 		00 0a           ; length 10
@@ -187,8 +181,9 @@ REPLY QR RD RA NOERROR
 SECTION QUESTION
 o.example.com. IN A
 SECTION AUTHORITY
-other.example.net. 3600 IN SOA ns.other.example.net. h.example.net. 1 2 3 4 5
+com. 3600 IN NS a.gtld.example.net.
 SECTION ADDITIONAL
+a.gtld.example.net. 3600 IN A 192.0.2.99
 	HEX_EDNSDATA_BEGIN
 		ff c8           ; CLUSTER option
 		00 0a           ; length 10
@@ -205,53 +200,6 @@ SECTION QUESTION
 o.example.com. IN A
 SECTION ANSWER
 o.example.com. 3600 IN A 10.8.8.3
-ENTRY_END
-
-STEP 24 QUERY
-ENTRY_BEGIN
-REPLY RD
-SECTION QUESTION
-x.example.com. IN A
-ENTRY_END
-
-STEP 25 CHECK_OUT_QUERY ADDRESS 10.0.0.3
-ENTRY_BEGIN
-MATCH qname qtype opcode ednsdata
-SECTION QUESTION
-x.example.com. IN A
-SECTION ADDITIONAL
-	HEX_EDNSDATA_BEGIN
-		ff c8           ; CLUSTER option
-		00 0a           ; length 10
-		01 03           ; version 1, flags
-		c1 68 3f 06 a9 43 ed 49 ; node id
-	HEX_EDNSDATA_END
-ENTRY_END
-
-STEP 26 REPLY
-ENTRY_BEGIN
-MATCH opcode qtype qname
-ADJUST copy_id
-REPLY QR RD RA NXDOMAIN
-SECTION QUESTION
-x.example.com. IN A
-SECTION ADDITIONAL
-	HEX_EDNSDATA_BEGIN
-		ff c8           ; CLUSTER option
-		00 0a           ; length 10
-		01 01           ; version 1, flags
-		00 00 00 00 00 00 00 03 ; node id
-	HEX_EDNSDATA_END
-ENTRY_END
-
-STEP 27 CHECK_ANSWER
-ENTRY_BEGIN
-MATCH all
-REPLY QR RD RA NOERROR
-SECTION QUESTION
-x.example.com. IN A
-SECTION ANSWER
-x.example.com. 3600 IN A 10.8.8.4
 ENTRY_END
 
 ; the owner is still up

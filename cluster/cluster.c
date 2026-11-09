@@ -2091,39 +2091,32 @@ enum cluster_reply_result {
 };
 
 /**
- * See if a good rcode answer from a recursive server is lame: a referral
- * or an empty message, NOERROR without answer and without SOA for the name,
- * or an NXDOMAIN without SOA in the authority section.
+ * See if a good rcode answer from a recursive server is lame: a referral,
+ * NOERROR without answer and with NS records in the authority section.
  * This is the part of the iterator response classification that applies
- * to answers for RD queries (response_type_from_server, REC_LAME and LAME),
+ * to answers for RD queries (response_type_from_server with rdset set),
  * that function needs a delegation point that we do not have.
+ * Like there, an NXDOMAIN is an answer, with or without SOA in the
+ * authority section (many DNSBL servers send NXDOMAIN without SOA, and a
+ * CNAME chain can end in another zone), and a NODATA is an answer, with
+ * an SOA (the name of the SOA is not compared, policy answers carry the
+ * SOA of the policy zone), or with nothing at all.  The scrubber removes
+ * the NS records when there is an SOA, so NS records are a referral, the
+ * owner is not able to resolve for us.
  */
 static int
-cluster_reply_is_lame(struct dns_msg* msg, struct query_info* qinfo)
+cluster_reply_is_lame(struct dns_msg* msg)
 {
 	struct reply_info* rep = msg->rep;
 	size_t i;
-	if(FLAGS_GET_RCODE(rep->flags) == LDNS_RCODE_NXDOMAIN) {
-		/* a negative answer needs the SOA in the authority section,
-		 * for the cache and the client; the zone of the SOA is not
-		 * compared, a CNAME chain can end in another zone */
-		for(i=rep->an_numrrsets;
-			i<rep->an_numrrsets+rep->ns_numrrsets; i++) {
-			if(ntohs(rep->rrsets[i]->rk.type) == LDNS_RR_TYPE_SOA)
-				return 0;
-		}
-		return 1;
-	}
-	if(rep->an_numrrsets > 0)
+	if(FLAGS_GET_RCODE(rep->flags) == LDNS_RCODE_NXDOMAIN ||
+		rep->an_numrrsets > 0)
 		return 0;
 	for(i=rep->an_numrrsets; i<rep->an_numrrsets+rep->ns_numrrsets; i++) {
-		struct ub_packed_rrset_key* k = rep->rrsets[i];
-		if(ntohs(k->rk.type) == LDNS_RR_TYPE_SOA &&
-			dname_subdomain_c(qinfo->qname, k->rk.dname))
-			return 0;
+		if(ntohs(rep->rrsets[i]->rk.type) == LDNS_RR_TYPE_NS)
+			return 1;
 	}
-	/* empty, or only a delegation in the authority section */
-	return 1;
+	return 0;
 }
 
 /**
@@ -2228,11 +2221,11 @@ cluster_process_reply(struct module_qstate* qstate, struct cluster_env* ce,
 		verbose(VERB_ALGO, "cluster: reply for a different question");
 		return CLUSTER_REPLY_BAD;
 	}
-	/* a referral or empty answer from a peer that is not able to
-	 * resolve for us, like a lame server for the iterator */
-	if(cluster_reply_is_lame(msg, &qstate->qinfo)) {
+	/* a referral from a peer that is not able to resolve for us, like
+	 * a lame server for the iterator */
+	if(cluster_reply_is_lame(msg)) {
 		verbose(VERB_ALGO, "cluster: lame reply from the owner, "
-			"referral or empty without SOA");
+			"referral");
 		return CLUSTER_REPLY_REJECT;
 	}
 	if(verbosity >= VERB_ALGO)
