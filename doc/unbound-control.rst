@@ -1496,6 +1496,13 @@ Extended Statistics
     then slow or broken for everyone.
 
 
+@@UAHL@unbound-control.stats@cluster.owner_cached_servfail@@
+    Number of failures of a request to resolve where the owner answered
+    SERVFAIL from its message cache (a cached error response).
+    The query was resolved locally, and the failure is not charged to the
+    owner, it is not ill: a standalone resolver would answer the same.
+
+
 @@UAHL@unbound-control.stats@cluster.resolve_ejected@@
     Number of cache misses where the owner was not asked to resolve the name,
     because it is resolve-ejected after charged failures, and the query was

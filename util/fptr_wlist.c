@@ -701,6 +701,9 @@ int fptr_whitelist_inplace_cb_reply_generic(inplace_cb_reply_func_type* fptr,
 		if(fptr == &dynlib_inplace_cb_reply_generic) return 1;
 #endif
 	} else if(type == inplace_cb_reply_servfail) {
+#ifdef USE_CLUSTER
+		if(fptr == &cluster_inplace_reply) return 1;
+#endif
 #ifdef WITH_PYTHONMODULE
 		if(fptr == &python_inplace_cb_reply_generic) return 1;
 #endif

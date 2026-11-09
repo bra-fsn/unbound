@@ -292,6 +292,9 @@ struct cluster_stats {
 	/** failures of step 2 of the owner that were charged to the owner by
 	 * the paired attribution: the local fallback succeeded fast */
 	uint64_t charged;
+	/** failures of step 2 of the owner that were a SERVFAIL answered from
+	 * the cache of the owner, these are not charged */
+	uint64_t owner_cached_servfail;
 	/** misses that the owner, resolve-ejected, was not asked to resolve,
 	 * these were resolved locally */
 	uint64_t resolve_ejected;

@@ -1,0 +1,148 @@
+; config options
+server:
+	access-control: 10.0.0.0/8 allow
+	target-fetch-policy: "0 0 0 0 0"
+	qname-minimisation: no
+	module-config: "validator cluster iterator"
+
+cluster:
+	cluster-peer: 10.0.0.1
+	cluster-peer: 10.0.0.2
+	cluster-peer: 10.0.0.3
+	cluster-self: 10.0.0.1
+	cluster-timeout: 100
+
+stub-zone:
+	name: "example.com"
+	stub-addr: 192.0.2.1
+CONFIG_END
+
+SCENARIO_BEGIN Cluster: the owner marks a cached SERVFAIL that the iterator answers (not the worker cache) with the cache hit flag.
+; t.example.com has a cached error response (SERVFAIL, NORR_TTL).  The CNAME
+; rrset of www.example.com (to t.example.com) is cached, but there is no
+; message for www.example.com A in the message cache, so the worker cannot
+; answer it.  The query goes to the mesh, the iterator follows the CNAME and
+; finds the cached error response of the target ("returning answer from
+; cache"): the message of the mesh state has the SERVFAIL rcode, and it is the
+; reply with the cache hit flag.  A fresh failure has no flag.
+RANGE_BEGIN 0 400
+	ADDRESS 192.0.2.1
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA SERVFAIL
+SECTION QUESTION
+t.example.com. IN A
+ENTRY_END
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA NOERROR
+SECTION QUESTION
+www.example.com. IN CNAME
+SECTION ANSWER
+www.example.com. 3600 IN CNAME t.example.com.
+ENTRY_END
+RANGE_END
+
+; fresh failure of the target: no cache hit flag, the error response is stored
+
+STEP 1 QUERY ADDRESS 10.0.0.2
+ENTRY_BEGIN
+MATCH ednsdata
+REPLY RD
+SECTION QUESTION
+t.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		00 00 00 00 00 00 00 02
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 10 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all ednsdata
+REPLY QR RD RA SERVFAIL
+SECTION QUESTION
+t.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+; the CNAME rrset of www is cached
+
+STEP 20 QUERY ADDRESS 10.0.0.2
+ENTRY_BEGIN
+MATCH ednsdata
+REPLY RD
+SECTION QUESTION
+www.example.com. IN CNAME
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		00 00 00 00 00 00 00 02
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 30 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all ednsdata
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+www.example.com. IN CNAME
+SECTION ANSWER
+www.example.com. 3600 IN CNAME t.example.com.
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+; the iterator answers the cached error of the target, with the flag
+
+STEP 40 QUERY ADDRESS 10.0.0.2
+ENTRY_BEGIN
+MATCH ednsdata
+REPLY RD
+SECTION QUESTION
+www.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		00 00 00 00 00 00 00 02
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 50 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all ednsdata
+REPLY QR RD RA SERVFAIL
+SECTION QUESTION
+www.example.com. IN A
+SECTION ANSWER
+www.example.com. 3600 IN CNAME t.example.com.
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 05
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+SCENARIO_END
