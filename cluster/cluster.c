@@ -2056,6 +2056,24 @@ cluster_cap_ttl(struct reply_info* rep, time_t cap)
 	}
 }
 
+/**
+ * Whether the TTLs of the copy of the answer from the owner are capped.
+ * The key material, DNSKEY and DS answers, and the proofs of no DS are
+ * not capped.  They are validated locally and their lifetime is bounded
+ * by the signatures (RFC 4035 section 5.3.3), but the key cache of the
+ * validator inherits the TTL of the rrset.  With a cap the trust anchor
+ * would be primed, and the DNSKEY and DS chain validated again, every cap
+ * seconds.
+ */
+static int
+cluster_ttl_capped(struct cluster_env* ce, struct module_qstate* qstate)
+{
+	uint16_t t = qstate->qinfo.qtype;
+	if(ce->local_ttl_max <= 0)
+		return 0;
+	return t != LDNS_RR_TYPE_DNSKEY && t != LDNS_RR_TYPE_DS;
+}
+
 /** result of looking at the reply of the owner */
 enum cluster_reply_result {
 	/** a good answer, in the result */
@@ -2224,7 +2242,7 @@ cluster_process_reply(struct module_qstate* qstate, struct cluster_env* ce,
 		limit_nsec_ttl(msg);
 	/* the names of this answer are not owned by this node, it is a
 	 * copy that is allowed to be of limited lifetime */
-	if(ce->local_ttl_max > 0)
+	if(cluster_ttl_capped(ce, qstate))
 		cluster_cap_ttl(msg->rep, (time_t)ce->local_ttl_max);
 	msg->rep->flags |= BIT_RA;
 	msg->rep->flags &= ~(BIT_AA | BIT_AD);
