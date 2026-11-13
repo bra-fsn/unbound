@@ -49,10 +49,12 @@
 #include "services/modstack.h"
 #include "services/outbound_list.h"
 #include "services/cache/dns.h"
+#include "services/cache/rrset.h"
 #include "services/cache/infra.h"
 #include "util/rtt.h"
 #include "iterator/iterator.h"
 #include "iterator/iter_scrub.h"
+#include "iterator/iter_resptype.h"
 #include "iterator/iter_utils.h"
 #include "util/config_file.h"
 #include "util/net_help.h"
@@ -1159,6 +1161,7 @@ cluster_stats_add(struct cluster_stats* a, struct cluster_stats* b)
 	a->excluded += b->excluded;
 	a->charged += b->charged;
 	a->owner_cached_servfail += b->owner_cached_servfail;
+	a->cname += b->cname;
 	a->resolve_ejected += b->resolve_ejected;
 	a->nolive += b->nolive;
 	a->served += b->served;
@@ -1394,6 +1397,7 @@ cluster_print_stats(struct module_env* env, cluster_print_cb cb, void* arg)
 	CLUSTER_STAT("fallback", t.fallback)
 	CLUSTER_STAT("charged", t.charged)
 	CLUSTER_STAT("owner_cached_servfail", t.owner_cached_servfail)
+	CLUSTER_STAT("cname", t.cname)
 	CLUSTER_STAT("resolve_ejected", t.resolve_ejected)
 	CLUSTER_STAT("self", t.self)
 	CLUSTER_STAT("excluded", t.excluded)
@@ -2088,6 +2092,14 @@ cluster_ttl_capped(struct cluster_env* ce, struct module_qstate* qstate)
 enum cluster_reply_result {
 	/** a good answer, in the result */
 	CLUSTER_REPLY_OK,
+	/** a good answer, but it is not the end of a CNAME chain: the chain
+	 * is partial, because the scrubber cut the rest off (with
+	 * harden-cname-follow, or the iter-scrub-cname limit), or because
+	 * the owner sent a partial chain, or the chain ends in NODATA or
+	 * NXDOMAIN.  The result has the CNAMEs (and perhaps records of the
+	 * authority section) and the chain is to be followed locally, like
+	 * the iterator does */
+	CLUSTER_REPLY_CNAME,
 	/** the cache probe missed, REFUSED with the MISS flag */
 	CLUSTER_REPLY_MISS,
 	/** the peer is alive, but the answer is not usable, like servfail,
@@ -2130,10 +2142,68 @@ cluster_reply_is_lame(struct dns_msg* msg)
 }
 
 /**
+ * See if the answer is a CNAME that the iterator would follow.  For
+ * NOERROR this is the classification of a cache message.  For NXDOMAIN
+ * it is like response_type_from_server: with a CNAME for the query
+ * name the NXDOMAIN is for the target, and not for the query name.
+ * Without harden-cname-follow the chain is not cut, and an SOA in the
+ * authority section says that the chain is complete.  Like the iterator,
+ * qtype ANY or CNAME with NXDOMAIN, and a DNAME to a subdomain of its
+ * own name, are answers.
+ */
+static int
+cluster_reply_is_cname(struct dns_msg* msg, struct query_info* qinfo,
+	struct config_file* cfg)
+{
+	struct reply_info* rep = msg->rep;
+	size_t i;
+	int is_cname = 0;
+	if(FLAGS_GET_RCODE(rep->flags) != LDNS_RCODE_NXDOMAIN) {
+		is_cname = (response_type_from_cache(msg, qinfo) ==
+			RESPONSE_TYPE_CNAME);
+	} else if(qinfo->qtype == LDNS_RR_TYPE_ANY ||
+		qinfo->qtype == LDNS_RR_TYPE_CNAME) {
+		/* the cache gives these a NOERROR answer from the CNAME, the
+		 * NXDOMAIN of the owner would be lost; it is an answer */
+		return 0;
+	} else {
+		int soa = 0;
+		if(!cfg->harden_cname_follow) {
+			for(i=rep->an_numrrsets;
+				i<rep->an_numrrsets+rep->ns_numrrsets; i++) {
+				if(ntohs(rep->rrsets[i]->rk.type) ==
+					LDNS_RR_TYPE_SOA)
+					soa = 1;
+			}
+		}
+		for(i=0; !soa && i<rep->an_numrrsets; i++) {
+			if(ntohs(rep->rrsets[i]->rk.type) ==
+				LDNS_RR_TYPE_CNAME &&
+				query_dname_compare(qinfo->qname,
+				rep->rrsets[i]->rk.dname) == 0) {
+				is_cname = 1;
+				break;
+			}
+		}
+	}
+	if(is_cname && rep->an_numrrsets >= 1 &&
+		ntohs(rep->rrsets[0]->rk.type) == LDNS_RR_TYPE_DNAME) {
+		/* like the iterator: a DNAME to a subdomain of itself is
+		 * an answer, it is not followed (that would loop) */
+		uint8_t* sname = NULL;
+		size_t slen = 0;
+		get_cname_target(rep->rrsets[0], &sname, &slen);
+		if(slen && dname_subdomain_c(sname, rep->rrsets[0]->rk.dname))
+			return 0;
+	}
+	return is_cname;
+}
+
+/**
  * Process the reply packet of the owner.
  * @param qstate: the query.
  * @param ce: cluster env.
- * @param result: the message is returned here, for an OK result.
+ * @param result: the message is returned here, for an OK or CNAME result.
  * @param cachehit: set to true if the owner says it came from its cache.
  * @param stale: set to true if the owner says the answer was expired.
  * @param opt_seen: set to true if the reply has the cluster option.
@@ -2259,6 +2329,14 @@ cluster_process_reply(struct module_qstate* qstate, struct cluster_env* ce,
 		*stale = (cflags & CLUSTER_FLAG_STALE)?1:0;
 	}
 	*result = msg;
+	/* The scrubber cuts the remainder of a CNAME chain off (with
+	 * harden-cname-follow, and at the iter-scrub-cname limit), that is
+	 * resolved by the iterator.  A partial chain from the owner, or a
+	 * chain that ends in NODATA, is no answer either.  An NXDOMAIN
+	 * with a CNAME for the query name is the NXDOMAIN of the end of
+	 * the chain, the scrubber has removed the rest of it. */
+	if(cluster_reply_is_cname(msg, &qstate->qinfo, qstate->env->cfg))
+		return CLUSTER_REPLY_CNAME;
 	return CLUSTER_REPLY_OK;
 }
 
@@ -2304,6 +2382,88 @@ cluster_fallback_done(struct module_qstate* qstate, struct cluster_env* ce,
 			cq->trial_gen, qstate->env);
 	}
 	cq->trial = 0;
+}
+
+/**
+ * The owner has given an answer: count it, and report it to the health
+ * and resolve state of the peer.  The query to the owner is over.
+ */
+static void
+cluster_owner_answered(struct module_qstate* qstate, struct cluster_env* ce,
+	struct cluster_qstate* cq, enum cluster_step step, int probe,
+	int has_opt, int cachehit)
+{
+	struct cluster_stats* st = cluster_mystats(ce, qstate->env);
+	struct cluster_peer* peer = &ce->peers[cq->peer];
+	if(step == CLUSTER_STEP_PROBE && !has_opt)
+		cluster_note_noopt(peer);
+	st->answered++;
+	if(cachehit)
+		st->answered_cachehit++;
+	cluster_peer_report(ce, peer, PEER_ANSWERED, probe,
+		step == CLUSTER_STEP_PROBE, qstate->env);
+	if(step == CLUSTER_STEP_RESOLVE) {
+		cluster_res_result(ce, peer, RES_SUCCESS, cq->trial,
+			cq->trial_gen, qstate->env);
+		cq->trial = 0;
+	}
+}
+
+/**
+ * The owner answered with a CNAME, and the chain is not complete, see
+ * CLUSTER_REPLY_CNAME.  The rrsets are stored in the rrset cache, and the
+ * query is passed on to the iterator.  The cache lookup of the iterator
+ * normally finds the CNAME, and follows the chain with local resolution.
+ * (It does not look for a CNAME for qtype DS, there the iterator resolves
+ * the name itself, which is correct.  It also does so when the rrsets are
+ * not stored, like for an expired answer of the owner.)  The iterator
+ * restarts for the target by itself, the query does not pass this module
+ * again.  This is an answer of the owner and not a failure, there is no
+ * local fallback to account for.
+ * The rrsets are stored here and not with dns_cache_store, that does not
+ * store an unchecked message when an expired message is in the cache.
+ * The message is not stored: the answer for the query name is the
+ * result of the whole chain.  Because dns_cache_store is not used, its
+ * serve-expired guard is skipped too: an expired validated CNAME rrset
+ * is overwritten with these unchecked rrsets, and if the local chase
+ * then fails the stale answer for the name is no longer there to serve.
+ */
+static void
+cluster_follow_cname(struct module_qstate* qstate, struct cluster_env* ce,
+	struct dns_msg* msg, int stale, int id)
+{
+	verbose(VERB_ALGO, "cluster: partial CNAME chain from the owner, "
+		"the chain is followed locally");
+	cluster_mystats(ce, qstate->env)->cname++;
+	if(!stale && !qstate->no_cache_store) {
+		struct reply_info* rep = reply_info_copy(msg->rep,
+			qstate->env->alloc, NULL);
+		size_t i;
+		if(!rep) {
+			log_err("out of memory storing cluster CNAME");
+		} else {
+			/* the ttl is relative, now is added; like the
+			 * referral store of dns_cache_store */
+			for(i=0; i<rep->rrset_count; i++) {
+				struct rrset_ref ref;
+				packed_rrset_ttl_add((struct packed_rrset_data*)
+					rep->rrsets[i]->entry.data,
+					*qstate->env->now);
+				ref.key = rep->rrsets[i];
+				ref.id = rep->rrsets[i]->id;
+				/* if it was in the cache, ref updated */
+				rrset_cache_update_unlock(
+					qstate->env->rrset_cache, &ref,
+					qstate->env->alloc,
+					((ntohs(ref.key->rk.type) ==
+					LDNS_RR_TYPE_NS)?qstate->qstarttime:
+					*qstate->env->now +
+					qstate->prefetch_leeway));
+			}
+			reply_info_delete(rep, NULL);
+		}
+	}
+	qstate->ext_state[id] = module_wait_module;
 }
 
 /** the reply of the owner, or the failure of the query to the owner */
@@ -2356,7 +2516,8 @@ cluster_handle_reply(struct module_qstate* qstate, struct cluster_env* ce,
 		 * samples are the valid replies of queries that were not
 		 * sent again (Karn) */
 		if(event == module_event_reply && cq->resends == 0 &&
-			(res == CLUSTER_REPLY_OK || res == CLUSTER_REPLY_MISS
+			(res == CLUSTER_REPLY_OK || res == CLUSTER_REPLY_CNAME
+			|| res == CLUSTER_REPLY_MISS
 			|| res == CLUSTER_REPLY_REJECT))
 			cluster_peer_rtt_sample(peer, cluster_tv_diff_us(
 				&cq->step_start, qstate->env->now_tv));
@@ -2367,18 +2528,12 @@ cluster_handle_reply(struct module_qstate* qstate, struct cluster_env* ce,
 	cq->pending = 0;
 	if(step == CLUSTER_STEP_PROBE)
 		cq->probe = 0; /* the slot is released by the report below */
-	if(res == CLUSTER_REPLY_OK) {
-		if(step == CLUSTER_STEP_PROBE && !has_opt)
-			cluster_note_noopt(peer);
-		st->answered++;
-		if(cachehit)
-			st->answered_cachehit++;
-		cluster_peer_report(ce, peer, PEER_ANSWERED, probe,
-			step == CLUSTER_STEP_PROBE, qstate->env);
-		if(step == CLUSTER_STEP_RESOLVE) {
-			cluster_res_result(ce, peer, RES_SUCCESS, cq->trial,
-				cq->trial_gen, qstate->env);
-			cq->trial = 0;
+	if(res == CLUSTER_REPLY_OK || res == CLUSTER_REPLY_CNAME) {
+		cluster_owner_answered(qstate, ce, cq, step, probe, has_opt,
+			cachehit);
+		if(res == CLUSTER_REPLY_CNAME) {
+			cluster_follow_cname(qstate, ce, msg, stale, id);
+			return;
 		}
 		if(stale) {
 			/* An expired answer of the owner is used for this

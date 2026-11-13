@@ -90,6 +90,7 @@ expect A probe.miss 1
 expect A answered.cachehit 0
 expect A failed 0
 expect A fallback 0
+expect A cname 0
 expect B served 1
 expect B served.probe_miss 1
 expect B routed 0
@@ -125,6 +126,7 @@ ctl A flush_stats
 expect A routed 0
 expect A answered 0
 expect A answered.cachehit 0
+expect A cname 0
 expect A charged 0
 expect A resolve_ejected 0
 
