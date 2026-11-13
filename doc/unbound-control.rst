@@ -1503,6 +1503,15 @@ Extended Statistics
     owner, it is not ill: a standalone resolver would answer the same.
 
 
+@@UAHL@unbound-control.stats@cluster.cname@@
+    Number of answers of the owner that are a partial CNAME chain: the rest
+    of the chain is cut off (harden-cname-follow, iter-scrub-cname), the
+    owner sent a partial chain, or the chain ends in NODATA or NXDOMAIN
+    (with harden-cname-follow on).
+    The CNAME records are stored and the chain is followed by local resolution.
+    These answers are also counted in cluster.answered.
+
+
 @@UAHL@unbound-control.stats@cluster.resolve_ejected@@
     Number of cache misses where the owner was not asked to resolve the name,
     because it is resolve-ejected after charged failures, and the query was

@@ -1,0 +1,76 @@
+; config options
+server:
+	target-fetch-policy: "0 0 0 0 0"
+	qname-minimisation: no
+	module-config: "validator cluster iterator"
+
+cluster:
+	cluster-peer: 10.0.0.1
+	cluster-peer: 10.0.0.2
+	cluster-peer: 10.0.0.3
+	cluster-self: 10.0.0.1
+	cluster-timeout: 100
+
+stub-zone:
+	name: "example.com"
+	stub-addr: 192.0.2.1
+CONFIG_END
+
+SCENARIO_BEGIN Cluster: NXDOMAIN of the owner for qtype ANY with a CNAME is an answer, the rcode is kept.
+; h.example.com is owned by 10.0.0.3.  The cache would make a NOERROR answer
+; from the CNAME, the NXDOMAIN of the owner must stay: it is not chased.
+
+STEP 1 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+h.example.com. IN ANY
+ENTRY_END
+
+STEP 2 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+h.example.com. IN ANY
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 03
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 3 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA NXDOMAIN
+SECTION QUESTION
+h.example.com. IN ANY
+SECTION ANSWER
+h.example.com. 3600 IN CNAME t.example.com.
+SECTION AUTHORITY
+example.com. 3600 IN SOA ns.example.com. hostmaster.example.com. 1 3600 900 604800 3600
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 4 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NXDOMAIN
+SECTION QUESTION
+h.example.com. IN ANY
+SECTION ANSWER
+h.example.com. 3600 IN CNAME t.example.com.
+SECTION AUTHORITY
+example.com. 3600 IN SOA ns.example.com. hostmaster.example.com. 1 3600 900 604800 3600
+ENTRY_END
+
+SCENARIO_END

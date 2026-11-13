@@ -295,6 +295,11 @@ struct cluster_stats {
 	/** failures of step 2 of the owner that were a SERVFAIL answered from
 	 * the cache of the owner, these are not charged */
 	uint64_t owner_cached_servfail;
+	/** answers of the owner that are a partial CNAME chain (the rest is
+	 * cut off by the scrubber, or the chain ends in NODATA or NXDOMAIN),
+	 * the chain is followed locally; these are counted in answered as
+	 * well */
+	uint64_t cname;
 	/** misses that the owner, resolve-ejected, was not asked to resolve,
 	 * these were resolved locally */
 	uint64_t resolve_ejected;

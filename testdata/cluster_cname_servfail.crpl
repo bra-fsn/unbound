@@ -1,0 +1,466 @@
+; config options
+server:
+	target-fetch-policy: "0 0 0 0 0"
+	qname-minimisation: no
+	module-config: "validator cluster iterator"
+
+cluster:
+	cluster-peer: 10.0.0.1
+	cluster-peer: 10.0.0.2
+	cluster-peer: 10.0.0.3
+	cluster-peer: 10.0.0.4
+	cluster-self: 10.0.0.1
+	cluster-timeout: 100
+
+stub-zone:
+	name: "example.com"
+	stub-addr: 192.0.2.1
+CONFIG_END
+
+SCENARIO_BEGIN Cluster: a CNAME answer of the owner is no failure, the local chase is not charged.
+; 4 peers, the names are owned by 10.0.0.3.  It misses the probes and answers
+; the resolve requests with a CNAME.  The target is at the authority and
+; answers at once, four times (three charged failures eject an owner, a fast
+; local answer is what a fallback would charge).  The owner answered, so none
+; of it is charged: another name (q6) is still sent to the owner with a
+; resolve request, and not resolved locally.
+RANGE_BEGIN 0 100000
+	ADDRESS 192.0.2.1
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA NOERROR
+SECTION QUESTION
+z1.example.com. IN A
+SECTION ANSWER
+z1.example.com. 3600 IN A 10.9.9.1
+ENTRY_END
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA NOERROR
+SECTION QUESTION
+z2.example.com. IN A
+SECTION ANSWER
+z2.example.com. 3600 IN A 10.9.9.2
+ENTRY_END
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA NOERROR
+SECTION QUESTION
+z3.example.com. IN A
+SECTION ANSWER
+z3.example.com. 3600 IN A 10.9.9.3
+ENTRY_END
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR AA NOERROR
+SECTION QUESTION
+z4.example.com. IN A
+SECTION ANSWER
+z4.example.com. 3600 IN A 10.9.9.4
+ENTRY_END
+RANGE_END
+
+STEP 10 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+q1.example.com. IN A
+ENTRY_END
+
+STEP 11 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+q1.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 03
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 12 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA REFUSED
+SECTION QUESTION
+q1.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 09
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 13 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+q1.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 14 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+q1.example.com. IN A
+SECTION ANSWER
+q1.example.com. 3600 IN CNAME z1.example.com.
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 15 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+q1.example.com. IN A
+SECTION ANSWER
+q1.example.com. 3600 IN CNAME z1.example.com.
+z1.example.com. 3600 IN A 10.9.9.1
+ENTRY_END
+
+STEP 20 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+q3.example.com. IN A
+ENTRY_END
+
+STEP 21 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+q3.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 03
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 22 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA REFUSED
+SECTION QUESTION
+q3.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 09
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 23 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+q3.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 24 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+q3.example.com. IN A
+SECTION ANSWER
+q3.example.com. 3600 IN CNAME z2.example.com.
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 25 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+q3.example.com. IN A
+SECTION ANSWER
+q3.example.com. 3600 IN CNAME z2.example.com.
+z2.example.com. 3600 IN A 10.9.9.2
+ENTRY_END
+
+STEP 30 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+q4.example.com. IN A
+ENTRY_END
+
+STEP 31 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+q4.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 03
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 32 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA REFUSED
+SECTION QUESTION
+q4.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 09
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 33 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+q4.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 34 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+q4.example.com. IN A
+SECTION ANSWER
+q4.example.com. 3600 IN CNAME z3.example.com.
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 35 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+q4.example.com. IN A
+SECTION ANSWER
+q4.example.com. 3600 IN CNAME z3.example.com.
+z3.example.com. 3600 IN A 10.9.9.3
+ENTRY_END
+
+STEP 40 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+q5.example.com. IN A
+ENTRY_END
+
+STEP 41 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+q5.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 03
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 42 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA REFUSED
+SECTION QUESTION
+q5.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 09
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 43 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+q5.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 44 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+q5.example.com. IN A
+SECTION ANSWER
+q5.example.com. 3600 IN CNAME z4.example.com.
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 45 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+q5.example.com. IN A
+SECTION ANSWER
+q5.example.com. 3600 IN CNAME z4.example.com.
+z4.example.com. 3600 IN A 10.9.9.4
+ENTRY_END
+
+STEP 50 QUERY
+ENTRY_BEGIN
+REPLY RD
+SECTION QUESTION
+q6.example.com. IN A
+ENTRY_END
+
+STEP 51 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+q6.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 03
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 52 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA REFUSED
+SECTION QUESTION
+q6.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 09
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 53 CHECK_OUT_QUERY ADDRESS 10.0.0.3
+ENTRY_BEGIN
+MATCH qname qtype opcode ednsdata
+SECTION QUESTION
+q6.example.com. IN A
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		c1 68 3f 06 a9 43 ed 49
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 54 REPLY
+ENTRY_BEGIN
+MATCH opcode qtype qname
+ADJUST copy_id
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+q6.example.com. IN A
+SECTION ANSWER
+q6.example.com. 3600 IN A 10.8.8.5
+SECTION ADDITIONAL
+	HEX_EDNSDATA_BEGIN
+		ff c8
+		00 0a
+		01 01
+		00 00 00 00 00 00 00 03
+	HEX_EDNSDATA_END
+ENTRY_END
+
+STEP 55 CHECK_ANSWER
+ENTRY_BEGIN
+MATCH all
+REPLY QR RD RA NOERROR
+SECTION QUESTION
+q6.example.com. IN A
+SECTION ANSWER
+q6.example.com. 3600 IN A 10.8.8.5
+ENTRY_END
+
+SCENARIO_END
