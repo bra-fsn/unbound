@@ -467,7 +467,7 @@ def apply_stats(res, st, keys):
 
 CL_KEYS = ["cluster.routed", "cluster.answered", "cluster.answered.cachehit", "cluster.probe.miss",
            "cluster.failed", "cluster.timeout", "cluster.resolve_timeout", "cluster.fallback", "cluster.charged",
-           "cluster.resolve_ejected", "cluster.self", "cluster.excluded",
+           "cluster.resolve_ejected", "cluster.owner_cached_servfail", "cluster.cname", "cluster.self", "cluster.excluded",
            "cluster.nolive", "cluster.served", "cluster.served.probe_miss", "cluster.version_mismatch",
            "total.num.queries", "total.num.cachehits", "total.num.cachemiss"]
 
